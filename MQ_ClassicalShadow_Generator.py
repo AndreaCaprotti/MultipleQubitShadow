@@ -24,9 +24,12 @@
 
 # +
 import numpy as np
+import scipy as sc
 import qutip as qt # handles all the quantum operations
 import qfunk.generator as gg # used to randomly sample states 
 import stim 
+
+
 
 import random # local random generator (i.e. for random observable)
 import time   # for time comparison and optimization
@@ -188,7 +191,7 @@ def listsparse_l_matrix (no_qubits, qubits_per_block, position, which_list):
 # #### Snapshot generator
 
 # + tags=[]
-# Handles unitary evolution as action on ket state
+# Handles unitary evolution on sc.sparse matrices
 
 def mq_cs_sparse_estimation (state, observable, basis, no_qubits, qubits_per_block, pure=False):  
     pref = prefactor(qubits_per_block,no_qubits)
@@ -199,22 +202,11 @@ def mq_cs_sparse_estimation (state, observable, basis, no_qubits, qubits_per_blo
     for j in range(no_blocks):
         
         unitary = sparse_l_matrix (qubits_per_block, dim_block, no_block, j)
-        
-        # choose evolution
-        if (pure):
-            rot_rho = unitary@rot_rho
-            #rot_rho = rot_rho/rot_rho.trace()   # normalization needed, since unitaries are not *exactly* unitary
-        else:
-            rot_rho = unitary@rot_rho@unitary.H
-            #rot_rho = rot_rho/rot_rho.trace()
-            
+        rot_rho = unitary@rot_rho@unitary.H
         observable = unitary@observable@unitary.H
 
     state = qt.Qobj(rot_rho)
 
-    if (pure):
-        state = qt.ket2dm(state)
-    
     meas, cond_state = qt.measurement.measure(state/state.tr(), basis)
     
     return pref*(observable@sc.sparse.csr_matrix(cond_state)).trace()
@@ -268,7 +260,7 @@ def define_file_name (params, index): # thought to be, eventually, extended for 
 # ### Parameters from command line
 
 # +
-if (len(sys.argv) == 10):
+if (len(sys.argv) == 11):
     dir_header = sys.argv[1]
     n_qb_tot = int(sys.argv[2])
     n_qb_block = int(sys.argv[3])
@@ -278,6 +270,7 @@ if (len(sys.argv) == 10):
     load_state = bool(sys.argv[7])
     load_obs = bool(sys.argv[8])
     obs_ind = int(sys.argv[9])
+    sparse  = bool(sys.argv[10])
     
 else:
     dir_header = "MultipleQubit"
@@ -289,6 +282,7 @@ else:
     load_state = False
     load_obs = False
     obs_ind = 0
+    sparse  = True
 # -
 
 # ### Default parameters
@@ -356,6 +350,12 @@ if (load_obs):
 else:
     obs = rand_pauli_sampler (spin_array, n_qb_tot, n_qb_block) 
     np.save(obs_dir + obs_file, obs.full())
+
+# If we're considering sparse matrices, turns `qt.Qobj` into a sparse matrix. Since sometimes it starts from a `np.array`, in general it's not the smartest move. For now we'll manage…
+
+if (sparse):
+    rho = sc.sparse.csr_matrix(rho.full())
+    obs = sc.sparse.csr_matrix(obs.full())
 
 true_expectation_value = (rho*obs).tr()
 
