@@ -271,17 +271,18 @@ def define_file_name (params, index): # thought to be, eventually, extended for 
 # ### Parameters from command line
 
 # +
-if (len(sys.argv) == 11):
+if (len(sys.argv) == 12):
     dir_header = sys.argv[1]
     n_qb_tot = int(sys.argv[2])
     n_qb_block = int(sys.argv[3])
     epsilon = sys.argv[4]
     n_runs = int(sys.argv[5])
-    n_traj = int(sys.argv[6])
-    load_state = bool(sys.argv[7])
-    load_obs = bool(sys.argv[8])
-    obs_ind = int(sys.argv[9])
-    sparse  = bool(sys.argv[10])
+    init_run = int(sys.argv[6])
+    n_traj = int(sys.argv[7])
+    load_state = bool(sys.argv[8])
+    load_obs = bool(sys.argv[9])
+    obs_ind = int(sys.argv[10])
+    sparse  = bool(sys.argv[11])
     
 else:
     dir_header = "MultipleQubit"
@@ -289,6 +290,7 @@ else:
     n_qb_block = 2 
     epsilon = 0.5
     n_runs = 1 # test 
+    init_run = 0 # fail-safe in case of interruption
     #n_runs = 30 # statistical significance
     n_traj = 10 #int(2* prefactor(1, n_qb_tot)/epsilon**2)
     load_state = False
@@ -339,7 +341,7 @@ os.system(f'mkdir -p {dir_name}') #should only create it once…
 
 # +
 # header specifies state
-state_file = dir_header+f"_state_{n_qb_tot}_qubits"
+state_file = dir_header+f"_state_{n_qb_tot}_qubits.npy"
 
 if (load_state):
     try:
@@ -348,13 +350,14 @@ if (load_state):
         rho = qt.rand_ket(dim_tot)  # using a pure state is equivalent but advantageous numerically
         rho = qt.ket2dm(rho)
         np.save(main_dir + state_file, rho.full())
+        print("I've saved a new file!")
 else:
     rho = qt.rand_ket(dim_tot)
     rho = qt.ket2dm(rho)
     np.save(main_dir + state_file, rho.full())
 # -
 
-obs_file = dir_header+f"_obs{obs_ind}_{n_qb_tot}_qubits"
+obs_file = dir_header+f"_obs{obs_ind}_{n_qb_tot}_qubits.npy"
 if (load_obs):
     try:
         obs = qt.Qobj(np.array(np.load(obs_dir + obs_file)))
@@ -374,7 +377,7 @@ if (sparse):
 
 # ## Classical shadow collection
 
-for i in range(n_runs):
+for i in range(init_run, n_runs):
     avg, var = classical_shadow_simulation (rho, obs, n_qb_block, n_qb_tot, n_traj, sparse)
     filename = define_file_name (parameters, i)
     np.save(dir_name+filename, np.array([avg,var]))
