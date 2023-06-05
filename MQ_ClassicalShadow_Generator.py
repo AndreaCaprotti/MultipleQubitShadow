@@ -72,8 +72,8 @@ spin_array = [Sx,Sy,Sz]
 
 # ### Random observable sampler
 
-def rand_pauli_sampler (obs_array, no_qubits, no_blocks):
-    qubits_per_block = int(no_qubits/no_blocks)        # not so useful for now, let's just keep it aside
+def rand_pauli_sampler (obs_array, no_qubits, qubits_per_block):
+    no_blocks = int(no_qubits/qubits_per_block)   # not so useful for now, let's just keep it aside
     no_obs = len(obs_array)
     tot_obs = []
     
@@ -81,7 +81,7 @@ def rand_pauli_sampler (obs_array, no_qubits, no_blocks):
         ind = random.randint(0,no_obs-1)
         tot_obs.append(obs_array[ind])
     
-    return qt.Qobj(qt.tensor(tot_obs).full())         # operation needed so that dimensions are always compatible  
+    return qt.Qobj(qt.tensor(tot_obs).full())      # operation needed so that dimensions are always compatible  
 
 
 # ## Random unitary sampler
@@ -97,10 +97,14 @@ def tot_clifford_sampler (no_qubits, qubits_per_block):
 
 # ## Classical snapshot expectation value 
 # In general, one should build a classical snapshot, store it and then use it to estimate the expectation value of some observable afterwards (in order to also possibly reuse data for other observables). Since this requires a non-trivial ammount of storage space, for now we just use a faster version which already considers the observable to be evaluated.
+#
+# Now 
 
 def prefactor (qubits_per_block,locality):
     return (2**qubits_per_block+1)**(locality/qubits_per_block)
 
+
+# ### First *basic* example
 
 # +
 def mq_classical_snapshot (state, basis, no_qubits, qubits_per_block): # "actual" version
@@ -126,6 +130,98 @@ def mq_cs_direct_estimation (state, observable, basis, no_qubits, qubits_per_blo
 
 # -
 
+# ### Optimized sparse multiplication
+
+# #### Tensor product and sparse unitary generator
+
+def tensor_sparse(*args):
+    if not args:
+        raise TypeError("Requires at least one input argument")
+
+    if len(args) == 1 and isinstance(args[0], (list, np.ndarray)):
+        # this is the case when tensor is called on the form:
+        # tensor([q1, q2, q3, ...])
+        qlist = args[0]
+
+    elif len(args) == 1 and isinstance(args[0], Qobj):
+        # tensor is called with a single Qobj as an argument, do nothing
+        return args[0]
+
+    else:
+        # this is the case when tensor is called on the form:
+        # tensor(q1, q2, q3, ...)
+        qlist = args
+    
+    out = [1]
+    for n, q in enumerate(qlist):
+        if n == 0:
+            out = q
+            
+        else:
+            out  = sc.sparse.kron(out, q)
+    return out
+
+
+def sparse_l_matrix (qubits_per_block, dim_block, no_block, position):
+    
+    no_id_before = [sc.sparse.identity(dim_block)] * (position) # since numbering starts at 0
+    no_id_after  = [sc.sparse.identity(dim_block)] * (no_block - position - 1)
+    
+    unitary = stim.Tableau.random(qubits_per_block).to_unitary_matrix(endian='little')
+    return tensor_sparse(no_id_before+[unitary]+no_id_after)
+
+
+# +
+def id_sparse_list (no_qubits,qubits_per_block):
+    no_blocks = int(no_qubits/qubits_per_block)
+    dim_block = 2**qubits_per_block
+    return [sc.sparse.identity(dim_block)]*no_blocks
+
+def listsparse_l_matrix (no_qubits, qubits_per_block, position, which_list):
+    unitary = stim.Tableau.random(qubits_per_block).to_unitary_matrix(endian='little')
+
+    return tensor_sparse(which_list[:position] + [unitary] + which_list[position+1:])
+
+
+# -
+
+# #### Snapshot generator
+
+# + tags=[]
+# Handles unitary evolution as action on ket state
+
+def mq_cs_sparse_estimation (state, observable, basis, no_qubits, qubits_per_block, pure=False):  
+    pref = prefactor(qubits_per_block,no_qubits)
+    no_block = int(no_qubits/qubits_per_block)
+    dim_block = 2**qubits_per_block
+
+    rot_rho = state
+    for j in range(no_blocks):
+        
+        unitary = sparse_l_matrix (qubits_per_block, dim_block, no_block, j)
+        
+        # choose evolution
+        if (pure):
+            rot_rho = unitary@rot_rho
+            #rot_rho = rot_rho/rot_rho.trace()   # normalization needed, since unitaries are not *exactly* unitary
+        else:
+            rot_rho = unitary@rot_rho@unitary.H
+            #rot_rho = rot_rho/rot_rho.trace()
+            
+        observable = unitary@observable@unitary.H
+
+    state = qt.Qobj(rot_rho)
+
+    if (pure):
+        state = qt.ket2dm(state)
+    
+    meas, cond_state = qt.measurement.measure(state/state.tr(), basis)
+    
+    return pref*(observable@sc.sparse.csr_matrix(cond_state)).trace()
+
+
+# -
+
 # ## Simulation function
 
 def classical_shadow_simulation (rho, obs, qb_block, qb_tot, n_tries):
@@ -135,11 +231,12 @@ def classical_shadow_simulation (rho, obs, qb_block, qb_tot, n_tries):
     time_tot = time.time()
 
     for t in range(n_tries):
-        exp_val = mq_cs_direct_estimation (rho, obs, comp_basis, n_qb_tot, n_qb_block)
+        #exp_val = mq_cs_direct_estimation (rho, obs, comp_basis, n_qb_tot, n_qb_block)
+        exp_val = mq_cs_sparse_estimation (rho, obs, comp_basis, n_qb_tot, n_qb_block)
         avg_array.append(exp_val)
         var_array.append(exp_val**2)
 
-    #print(f"{qb_block} qubits per block take: {time.time()-time_tot} seconds to complete")
+    print(f"{qb_block} qubits per block take: {time.time()-time_tot} seconds to complete")
     
     return avg_array, var_array
 
@@ -200,6 +297,11 @@ else:
 qubit_dim = 2
 dim_tot = qubit_dim**n_qb_tot
 dim_block = qubit_dim**n_qb_block
+
+if (dim_tot%dim_block == 0):
+    no_of_blocks = dim_tot / dim_block
+else:
+    raise NameError("Blocks are not all of the same size")
 
 expected_prefactor = prefactor(n_qb_block,n_qb_tot)
 
