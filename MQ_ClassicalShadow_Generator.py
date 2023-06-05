@@ -174,6 +174,15 @@ def sparse_l_matrix (qubits_per_block, dim_block, no_block, position):
     return tensor_sparse(no_id_before+[unitary]+no_id_after)
 
 
+def sparse_whole_matrix ( qubits_per_block,no_block, position):
+
+    dim_before = 2**(qubits_per_block*position)
+    dim_after  = 2**(qubits_per_block*(no_block - position-1))
+    
+    unitary = stim.Tableau.random(qubits_per_block).to_unitary_matrix(endian='little')
+    return tensor_sparse(sc.sparse.identity(dim_before),unitary,sc.sparse.identity(dim_after))
+
+
 # +
 def id_sparse_list (no_qubits,qubits_per_block):
     no_blocks = int(no_qubits/qubits_per_block)
@@ -193,15 +202,14 @@ def listsparse_l_matrix (no_qubits, qubits_per_block, position, which_list):
 # + tags=[]
 # Handles unitary evolution on sc.sparse matrices
 
-def mq_cs_sparse_estimation (state, observable, basis, no_qubits, qubits_per_block, pure=False):  
+def mq_cs_sparse_estimation (state, observable, basis, no_qubits, qubits_per_block):  
     pref = prefactor(qubits_per_block,no_qubits)
     no_block = int(no_qubits/qubits_per_block)
     dim_block = 2**qubits_per_block
 
     rot_rho = state
-    for j in range(no_blocks):
-        
-        unitary = sparse_l_matrix (qubits_per_block, dim_block, no_block, j)
+    for j in range(no_block):
+        unitary = sparse_whole_matrix (qubits_per_block, no_block, j)
         rot_rho = unitary@rot_rho@unitary.H
         observable = unitary@observable@unitary.H
 
@@ -216,15 +224,18 @@ def mq_cs_sparse_estimation (state, observable, basis, no_qubits, qubits_per_blo
 
 # ## Simulation function
 
-def classical_shadow_simulation (rho, obs, qb_block, qb_tot, n_tries):
+def classical_shadow_simulation (rho, obs, qb_block, qb_tot, n_tries, sparse):
     avg_array = []
     var_array = []
 
     time_tot = time.time()
 
     for t in range(n_tries):
-        #exp_val = mq_cs_direct_estimation (rho, obs, comp_basis, n_qb_tot, n_qb_block)
-        exp_val = mq_cs_sparse_estimation (rho, obs, comp_basis, n_qb_tot, n_qb_block)
+        if(sparse):
+            exp_val = mq_cs_sparse_estimation (rho, obs, comp_basis, n_qb_tot, n_qb_block)
+        else:
+            exp_val = mq_cs_direct_estimation (rho, obs, comp_basis, n_qb_tot, n_qb_block)
+        
         avg_array.append(exp_val)
         var_array.append(exp_val**2)
 
@@ -274,15 +285,16 @@ if (len(sys.argv) == 11):
     
 else:
     dir_header = "MultipleQubit"
-    n_qb_tot = 4
+    n_qb_tot = 8
     n_qb_block = 2 
     epsilon = 0.5
-    n_runs = 30 # statistical significance
-    n_traj = int(2* prefactor(1, n_qb_tot)/epsilon**2)
+    n_runs = 1 # test 
+    #n_runs = 30 # statistical significance
+    n_traj = 10 #int(2* prefactor(1, n_qb_tot)/epsilon**2)
     load_state = False
     load_obs = False
     obs_ind = 0
-    sparse  = True
+    sparse  = False
 # -
 
 # ### Default parameters
@@ -333,10 +345,12 @@ if (load_state):
     try:
         rho = qt.Qobj(np.array(np.load(main_dir + state_file)))
     except IOError: # if, for the first time, the state is not present
-        rho = qt.rand_dm(dim_tot)
+        rho = qt.rand_ket(dim_tot)  # using a pure state is equivalent but advantageous numerically
+        rho = qt.ket2dm(rho)
         np.save(main_dir + state_file, rho.full())
 else:
-    rho = qt.rand_dm(dim_tot)
+    rho = qt.rand_ket(dim_tot)
+    rho = qt.ket2dm(rho)
     np.save(main_dir + state_file, rho.full())
 # -
 
@@ -353,16 +367,15 @@ else:
 
 # If we're considering sparse matrices, turns `qt.Qobj` into a sparse matrix. Since sometimes it starts from a `np.array`, in general it's not the smartest move. For now we'll manage…
 
+true_expectation_value = (rho*obs).tr()
 if (sparse):
     rho = sc.sparse.csr_matrix(rho.full())
     obs = sc.sparse.csr_matrix(obs.full())
 
-true_expectation_value = (rho*obs).tr()
-
 # ## Classical shadow collection
 
 for i in range(n_runs):
-    avg, var = classical_shadow_simulation (rho, obs, n_qb_block, n_qb_tot, n_traj)
+    avg, var = classical_shadow_simulation (rho, obs, n_qb_block, n_qb_tot, n_traj, sparse)
     filename = define_file_name (parameters, i)
     np.save(dir_name+filename, np.array([avg,var]))
     print('\n')
