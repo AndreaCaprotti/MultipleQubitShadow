@@ -29,12 +29,13 @@ def prefactor (qubits_per_block,locality):
 save = False
 
 # +
-header = ["4Bennaces"]
+header = ["4Bennacer"]
 
 n_qubits = 8
-n_blocks = [1,2,4]#4
-epsilon = [0.5]#,0.05]
+n_blocks = [2,4]
+epsilon = [1]
 n_runs = 30
+init_runs = 30 # also to add
 no_diff_obs = 1
 
 load_state = True
@@ -45,12 +46,12 @@ for head in header:
     for obs in range(0,no_diff_obs):
         for nb in n_blocks:
             for e in epsilon:
-                n_traj = int(1.5*prefactor(1,n_qubits)/(e**2))
-                command_line = f' {head} {int(n_qubits)} {int(nb)} {e} {int(n_runs)} {int(n_traj)} {load_state} {load_obs} {obs} {sparse}'
+                n_traj = int(1.5*prefactor(nb, n_qubits)/(e**2))
+                command_line = f' {head} {int(n_qubits)} {int(nb)} {e} {int(n_runs)} {int(init_runs)} {int(n_traj)} {load_state} {load_obs} {obs} {sparse}'
                 if (save):
-                    print(command_line)
+                    time_start = time.time()
                     os.system(f'python MQ_ClassicalShadow_Generator.py {command_line}')
-
+                    print (time.time()-time_start, command_line)
 # -
 
 

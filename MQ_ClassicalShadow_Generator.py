@@ -183,6 +183,10 @@ def sparse_whole_matrix ( qubits_per_block,no_block, position):
     return tensor_sparse(sc.sparse.identity(dim_before),unitary,sc.sparse.identity(dim_after))
 
 
+def clifford_unitary (qubits_per_block):
+    return sc.sparse.csr_matrix(stim.Tableau.random(qubits_per_block).to_unitary_matrix(endian='little'))
+
+
 # +
 def id_sparse_list (no_qubits,qubits_per_block):
     no_blocks = int(no_qubits/qubits_per_block)
@@ -209,7 +213,11 @@ def mq_cs_sparse_estimation (state, observable, basis, no_qubits, qubits_per_blo
 
     rot_rho = state
     for j in range(no_block):
-        unitary = sparse_whole_matrix (qubits_per_block, no_block, j)
+        if (no_block == 1 ):
+            unitary = clifford_unitary(qubits_per_block)
+        else:
+            unitary = sparse_whole_matrix (qubits_per_block, no_block, j)
+            
         rot_rho = unitary@rot_rho@unitary.H
         observable = unitary@observable@unitary.H
 
@@ -287,12 +295,12 @@ if (len(sys.argv) == 12):
 else:
     dir_header = "MultipleQubit"
     n_qb_tot = 8
-    n_qb_block = 2 
+    n_qb_block = 1
     epsilon = 0.5
     n_runs = 1 # test 
     init_run = 0 # fail-safe in case of interruption
     #n_runs = 30 # statistical significance
-    n_traj = 10 #int(2* prefactor(1, n_qb_tot)/epsilon**2)
+    n_traj = 1 #int(2* prefactor(1, n_qb_tot)/epsilon**2)
     load_state = False
     load_obs = False
     obs_ind = 0
@@ -377,7 +385,7 @@ if (sparse):
 
 # ## Classical shadow collection
 
-for i in range(init_run, n_runs):
+for i in range(init_run, init_run+n_runs):
     avg, var = classical_shadow_simulation (rho, obs, n_qb_block, n_qb_tot, n_traj, sparse)
     filename = define_file_name (parameters, i)
     np.save(dir_name+filename, np.array([avg,var]))
