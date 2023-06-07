@@ -280,7 +280,7 @@ def classical_shadow_simulation (rho, obs, qb_block, qb_tot, n_tries, sparse):
         avg_array.append(exp_val)
         var_array.append(exp_val**2)
 
-    print(f"{qb_block} qubits per block take: {time.time()-time_tot} seconds to complete")
+    #print(f"{qb_block} qubits per block take: {time.time()-time_tot} seconds to complete")
     
     return avg_array, var_array
 
@@ -321,11 +321,11 @@ if (len(sys.argv) == 13):
     n_runs = int(sys.argv[5])
     init_run = int(sys.argv[6])
     n_traj = int(sys.argv[7])
-    load_state = bool(sys.argv[8])
-    load_obs = bool(sys.argv[9])
+    load_state = int(sys.argv[8])
+    load_obs = int(sys.argv[9])
     obs_ind = int(sys.argv[10])
-    sparse  = bool(sys.argv[11])
-    bell    = bool(sys.argv[12])
+    sparse  = int(sys.argv[11])
+    bell_bool = int(sys.argv[12])
     
 else:
     dir_header = "MultipleQubit"
@@ -340,7 +340,7 @@ else:
     load_obs = False
     obs_ind = 0
     sparse  = False
-    bell    = False
+    bell_bool  = True
 # -
 
 # ### Default parameters
@@ -357,12 +357,14 @@ else:
 
 expected_prefactor = prefactor(n_qb_block,n_qb_tot)
 
-if (bell):
-    comp_basis = bell_basis(n_qb_tot)
+if (bell_bool):
+    comp_basis = bell_povm(n_qb_tot)
+    meas = 'bell'
 else:
-    comp_basis = comp_basis(qubit_dim**n_qb_tot)
+    comp_basis = comp_basis_povm(qubit_dim**n_qb_tot)
+    meas = 'comp'
 
-parameters = [obs_ind, n_qb_tot, n_qb_block, epsilon]
+parameters = [obs_ind, n_qb_tot, n_qb_block, epsilon, meas]
 # -
 
 # Here we generate random states and observables in order to have no bias for the estimation. Should *definitely* be generalised, but for now good enough
@@ -428,6 +430,5 @@ for i in range(init_run, init_run+n_runs):
     avg, var = classical_shadow_simulation (rho, obs, n_qb_block, n_qb_tot, n_traj, sparse)
     filename = define_file_name (parameters, i)
     np.save(dir_name+filename, np.array([avg,var]))
-    print('\n')
 
 

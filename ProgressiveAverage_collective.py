@@ -50,14 +50,15 @@ from matplotlib.lines import Line2D
 param_title = ["_obs",
                "_ntot",
                "_nblock",
-               "_eps"
+               "_eps",
+               "_meas"
               ]
 
 i_obs  = 0
 i_ntot = 1
 i_nblock = 2
 i_eps = 3
-i_loc = 4 # announced, TBD
+i_meas = 5 
 
 
 # -
@@ -81,6 +82,7 @@ def define_dir_name(dir_header, parameters):# identifies directory name
     return main_dir, obs_dir, dir_name
 
 
+# + [markdown] tags=[]
 # ## Statistical functions
 
 # +
@@ -119,6 +121,154 @@ def actual_prog_var (vec_avg, exp_val):
     return np.array(avg_array)
 
 
+# -
+
+# ## Plot functions
+
+# + [markdown] tags=[]
+# ### Progressive average comparison
+# -
+
+def progressive_average_comparison(collection,length_factor):
+    
+    collection.len_fact = length_factor
+    qb_block = collection.qb_per_block
+    rows = len(qb_block)
+    cols = 1
+    eps = 0.5
+    ymax = 2
+
+    exp_val = collection.get_true_eval()
+
+    fig, axs = plt.subplots(rows, cols, figsize=[10*cols,4*rows])#, sharex = True)
+
+    if (collection.meas):
+        fig.suptitle(f"{collection.meas} measurements")
+        
+    for n_qb in qb_block:
+        index = collection.corresponding_index(n_qb)
+        eval_block = collection.get_final_eval(n_qb)
+        prefactor = collection.prefactor(n_qb)
+        eps_len = collection.len_fact*prefactor/eps**2
+
+        avg, var = collection.progressive_traj(n_qb, eps, False)
+        for actual_vec in avg:
+            axs[index].plot(np.arange(len(actual_vec)),actual_vec, linewidth = 0.3)
+
+        axs[index].hlines(np.sign(eval_block)*exp_val + eps, 0, eps_len, linewidth = 2, linestyle=':')
+        axs[index].hlines(np.sign(eval_block)*exp_val, 0, eps_len, linewidth = 2, label = 'expected value')
+        axs[index].hlines(np.sign(eval_block)*exp_val - eps, 0, eps_len, linewidth = 2, linestyle=':' )
+        axs[index].hlines(eval_block, 0, eps_len, linewidth = 2, linestyle = '--', label = 'final average')
+
+        axs[index].vlines(eps_len, -ymax, ymax, linestyle = '--')
+
+        axs[index].set_ylim(-ymax,ymax)
+        #axs[index].set_xscale('log')
+        axs[index].legend(loc='lower right')
+        axs[index].set_title(f"Measurements on {n_qb} qubits at the same time")
+
+
+# ### Measurement comparison
+
+def measurement_comparison(comp_collection, bell_collection, n_qb, length_factor):
+    
+    comp_collection.len_fact = length_factor
+    bell_collection.len_fact = length_factor
+
+    rows = 2
+    cols = 1
+    eps = 0.3
+    ymax = 2
+    c=['xkcd:navy blue', 'xkcd:scarlet']
+    
+    exp_val = comp_collection.get_true_eval() # should be equivalent…
+    eps_len = comp_collection.expected_scale(n_qb,eps)
+    pref = comp_collection.prefactor(n_qb)
+    
+    fig, axs = plt.subplots(rows, cols, figsize=[10*cols,4*rows], sharex = True)
+    fig.suptitle(f"{n_qb} qubits per block, measurement comparison")
+    
+    index = comp_collection.corresponding_index(n_qb)
+
+    # computational basis
+    axs[0].set_title("Computational basis")
+    eval_c = comp_collection.final_avg(n_qb)
+    axs[0].hlines(eval_c, 0, eps_len, linewidth = 2, linestyle = '--', label = 'final average',color='xkcd:navy blue')
+    
+    avg_c, var_c = comp_collection.progressive_traj(n_qb, eps, False)
+    for vec_c in avg_c:
+        axs[0].plot(np.arange(len(vec_c)),vec_c, linewidth = 0.3,c='xkcd:cerulean')
+    
+            
+    # Bell basis
+    axs[1].set_title("Bell basis")
+    eval_b = bell_collection.final_avg(n_qb)
+    axs[1].hlines(eval_b, 0, eps_len, linewidth = 2, linestyle = '--', label = 'final average', color='xkcd:scarlet')
+    
+    avg_b, var_b = bell_collection.progressive_traj(n_qb, eps, False)
+    for vec_b in avg_b:
+        axs[1].plot(np.arange(len(vec_b)),vec_b, linewidth = 0.3,c='xkcd:bright red')
+    
+    for i in (0,1):
+        axs[i].hlines(np.sign(eval_c)*exp_val + eps, 0, eps_len, linewidth = 2, linestyle=':',color='k')
+        axs[i].hlines(np.sign(eval_c)*exp_val, 0, eps_len, linewidth = 2, label = 'expected value',color='k')
+        axs[i].hlines(np.sign(eval_c)*exp_val - eps, 0, eps_len, linewidth = 2, linestyle=':' ,color='k')
+        axs[i].set_ylim(-ymax,ymax)
+        #axs[index].set_xscale('log')
+        
+    facts = np.arange(length_factor+1)
+    for i in (0,1):
+        for f in facts:
+            eps_len = f*pref/eps**2
+            axs[i].vlines(eps_len, -ymax, ymax, linestyle = '--',color=c[i])
+
+    axs[1].legend(loc='lower right')
+
+
+# ### *Cheating* progressive average
+# Longer progressive average on all data
+
+def cheating_progressive_average(collection, lenght_fact):
+    collection.len_fact = lenght_fact
+    qb_block = collection.qb_per_block
+    rows = len(qb_block)
+    cols = 1
+    epsilons = [1,0.5,0.3]#,0.1,0.05]
+    colors = ['xkcd:azure', 'xkcd:bright orange', 'xkcd:kelly green', 'xkcd:red','xkcd:violet']
+
+    ymax = 2
+    n_traj = 30
+    exp_val = collection.get_true_eval()
+
+    fig, axs = plt.subplots(rows, cols, figsize=[10*cols,4*rows])#, sharex = True)
+    if (collection.meas):
+        fig.suptitle(f"{collection.meas} measurements")
+
+    
+    for n_qb in qb_block:
+        index = collection.corresponding_index(n_qb)
+        eval_block = collection.get_final_eval(n_qb)
+        prefactor = collection.prefactor(n_qb)
+
+        for j in range(n_traj):
+            avg, var = collection.cheating_progressive_traj(n_qb)
+            axs[index].plot(np.arange(len(avg)), avg, linewidth=0.3)
+
+        axs[index].hlines(np.sign(eval_block)*exp_val, 0, len(avg), linewidth = 2, label = 'expected value', color='k')
+        axs[index].hlines(eval_block, 0, len(avg), linewidth = 2, linestyle = '--', label = 'final average', color='k')
+
+        for i in range(len(epsilons)):
+            eps = epsilons[i]
+            eps_len = prefactor/eps**2
+            axs[index].hlines(np.sign(eval_block)*exp_val + eps, 0, len(avg), linewidth = 2, linestyle=':',color=colors[i])
+            axs[index].hlines(np.sign(eval_block)*exp_val - eps, 0, len(avg), linewidth = 2, linestyle=':',color=colors[i] )
+            axs[index].vlines(eps_len, -ymax, ymax, linestyle = '--', label = f"$\epsilon={eps}$",color=colors[i])
+
+        axs[index].set_ylim(-ymax,ymax)
+        #axs[index].set_xscale('log')
+        axs[index].legend(loc='lower right')
+        axs[index].set_title(f"Measurements on {n_qb} qubits at the same time")
+
 # + [markdown] tags=[]
 # ## Data class
 # Compared to the previous class, this gathers all the relevant data: essentially, an element of these corresponds to snapshot of same state (and, for now, also observable). That is, all the data should correspond to the same expectation value
@@ -148,14 +298,15 @@ i_var = 2
 # -
 
 class cs_collection ():
-    def __init__ (self, head, obs_ind, tot_qubits, qb_per_block):
+    def __init__ (self, head, obs_ind, tot_qubits, qb_per_block, measure=None):
         # assigns characteristic variables
         self.header = head
         
         self.n_qubits = tot_qubits
         self.qb_per_block = np.array(qb_per_block)
         self.obs_ind = obs_ind
-
+        self.meas = measure
+        
         self.foobar = "*" # not defined a priori, obsolete parameter which has come back to haunt me
         self.len_fact = 2 # used to define how long a trajectory is
         
@@ -171,7 +322,11 @@ class cs_collection ():
         
         self.__load_all()
         return
-        
+    
+    # ---------------------------------------- #
+    # reference to state and expectation value
+    # ---------------------------------------- #
+    
     def __define_paths (self):   # identifies uniquely state, observable and particular file path
         fixed_dir = '/Users/andrea/vienna_data/clifford_data/' 
         main_dir = fixed_dir+self.header+'/'
@@ -194,6 +349,10 @@ class cs_collection ():
         i_block = self.corresponding_index(n_qb)
         return self.__avg_eval[i_block]
     
+    # ----------------------- #
+    # load data in collection
+    # ----------------------- #
+    
     def __load_all(self):              # in order to guarantee that order of evals is the same as qb_block
         print(f"Commencing automatic data load for state {self.header}")
         for qb in self.qb_per_block:
@@ -206,13 +365,17 @@ class cs_collection ():
     def load_data_per_qb(self, n_qb): # for now, it just finds all relevant data with the same header, n_qb and n_block
         i_block=self.corresponding_index(n_qb) 
         params = [self.obs_ind, self.n_qubits, n_qb, self.foobar]
+        if (self.meas):
+            params.append(self.meas)
+            
         main, obs, dir_name = define_dir_name (self.header, params)
         file_name = define_file_name(params, self.foobar)
-        relevant_files = glob.glob(dir_name+file_name)
-        
+        relevant_files = glob.glob(dir_name+file_name+'.npy')
+
         for file in relevant_files:
             foo_vec = np.real(np.load(file))
             self.__increase_eval(i_block, foo_vec[i_exp],foo_vec[i_exp2])
+
         return
         
     def __increase_eval(self, i_block, vec_eval, vec_var):
@@ -223,7 +386,11 @@ class cs_collection ():
             self.__eval[i_block]  = np.concatenate([self.__eval[i_block],vec_eval])
             self.__eval2[i_block] = np.concatenate([self.__eval2[i_block],vec_var])
         return
-            
+     
+    # -------------------------------------------- #
+    # functions for returning characteristic values
+    # -------------------------------------------- # 
+    
     def final_avg (self, n_qb): # returns the corresponding average, given localilty of measurement
         i_block = self.corresponding_index(n_qb)
         return np.sum(self.__eval[i_block])/len(self.__eval[i_block])
@@ -235,8 +402,11 @@ class cs_collection ():
         return (2**n_block+1)**(self.n_qubits/n_block)
     
     def expected_scale (self,n_block,eps):
-        return self.len_fact*self.prefactor(n_qb)/eps**2
+        return self.len_fact*self.prefactor(n_block)/eps**2
 
+    # -------------------- #
+    # progressive averages
+    # -------------------- #
     def __shuffle_blocks(self, index):
         assert len(self.__eval[index]) == len(self.__eval2[index])
         p = np.random.permutation(len(self.__eval[index]))
@@ -255,7 +425,7 @@ class cs_collection ():
         if (shuffle):
             self.__shuffle_blocks(i_block)
         
-        split_data = self.__qb_divide(np.array(self.__eval[index]), n_qb, eps)
+        split_data = self.__qb_divide(np.array(self.__eval[i_block]), n_qb, eps)
         split_var  = self.__qb_divide(np.array(self.__eval2[i_block]), n_qb, eps)
         
         return [prog_avg(chunk) for chunk in split_data], [prog_var(data, var) for data, var in zip(split_data,split_var)]
@@ -279,85 +449,24 @@ isma = cs_collection(header, no_obs, qb_tot, qb_block)
 
 # -
 
-# ### Progressive average comparison
+progressive_average_comparison(isma,2)
+
+cheating_progressive_average(isma, 1.5)
+
+# ## Bonaventura data
 
 # +
-isma.len_fact = 1.5
-rows = len(qb_block)
-cols = 1
-eps = 0.5
-ymax = 2
+header = "5Bonaventura"
+qb_tot = 4
+qb_block = [1,2,4]
+no_obs = 0
 
-isma_exp_val = isma.get_true_eval()
+jack_comp = cs_collection(header, no_obs, qb_tot, qb_block,'comp')
+jack_bell = cs_collection(header, no_obs, qb_tot, qb_block,'bell')
 
-fig, axs = plt.subplots(rows, cols, figsize=[10*cols,4*rows])#, sharex = True)
 
-for n_qb in qb_block:
-    index = isma.corresponding_index(n_qb)
-    eval_block = isma.get_final_eval(n_qb)
-    prefactor = isma.prefactor(n_qb)
-    eps_len = isma.len_fact*prefactor/eps**2
-    
-    avg, var = isma.progressive_traj(n_qb, eps, False)
-    for actual_vec in avg:
-        axs[index].plot(np.arange(len(actual_vec)),actual_vec, linewidth = 0.3)
-    
-    axs[index].hlines(np.sign(eval_block)*isma_exp_val + eps, 0, eps_len, linewidth = 2, linestyle=':')
-    axs[index].hlines(np.sign(eval_block)*isma_exp_val, 0, eps_len, linewidth = 2, label = 'expected value')
-    axs[index].hlines(np.sign(eval_block)*isma_exp_val - eps, 0, eps_len, linewidth = 2, linestyle=':' )
-    axs[index].hlines(eval_block, 0, eps_len, linewidth = 2, linestyle = '--', label = 'final average')
-    
-    axs[index].vlines(eps_len, -ymax, ymax, linestyle = '--')
-    
-    axs[index].set_ylim(-ymax,ymax)
-    #axs[index].set_xscale('log')
-    axs[index].legend()
-    axs[index].set_title(f"Measurements on {n_qb} qubits at the same time")
-
-# + [markdown] tags=[]
-# ### **Cheating** progressive average
-# Longer progressive average on all data
-
-# +
-isma.len_fact = 1.5
-rows = len(qb_block)
-cols = 1
-epsilons = [1,0.5,0.3]
-colors = ['xkcd:azure', 'xkcd:bright orange', 'xkcd:kelly green']
-
-ymax = 1
-
-n_traj = 30
-
-isma_exp_val = isma.get_true_eval()
-
-fig, axs = plt.subplots(rows, cols, figsize=[10*cols,4*rows])#, sharex = True)
-
-for n_qb in qb_block:
-    index = isma.corresponding_index(n_qb)
-    eval_block = isma.get_final_eval(n_qb)
-    prefactor = isma.prefactor(n_qb)
-    
-    for j in range(n_traj):
-        avg, var = isma.cheating_progressive_traj(n_qb)
-        axs[index].plot(np.arange(len(avg)), avg, linewidth=0.3)
-
-    axs[index].hlines(np.sign(eval_block)*isma_exp_val, 0, len(avg), linewidth = 2, label = 'expected value', color='k')
-    axs[index].hlines(eval_block, 0, len(avg), linewidth = 2, linestyle = '--', label = 'final average', color='k')
-        
-    for i in range(len(epsilons)):
-        eps = epsilons[i]
-        eps_len = prefactor/eps**2
-        axs[index].hlines(np.sign(eval_block)*isma_exp_val + eps, 0, len(avg), linewidth = 2, linestyle=':',color=colors[i])
-        axs[index].hlines(np.sign(eval_block)*isma_exp_val - eps, 0, len(avg), linewidth = 2, linestyle=':',color=colors[i] )
-        axs[index].vlines(eps_len, -ymax, ymax, linestyle = '--', label = f"$\epsilon={eps}$",color=colors[i])
-    
-    axs[index].set_ylim(-ymax,ymax)
-    #axs[index].set_xscale('log')
-    axs[index].legend()
-    axs[index].set_title(f"Measurements on {n_qb} qubits at the same time")
 # -
 
-# ### Progressive variance comparison
+measurement_comparison(jack_comp, jack_bell, 1, 1)
 
 
