@@ -26,10 +26,11 @@
 import numpy as np
 import scipy as sc
 import qutip as qt # handles all the quantum operations
+import qbism as qb
 import qfunk.generator as gg # used to randomly sample states 
 import stim 
 
-
+import itertools
 
 import random # local random generator (i.e. for random observable)
 import time   # for time comparison and optimization
@@ -50,12 +51,42 @@ import os
 # For now, we consider tensor products of non-trivial Paulis. This shold not be the general case (at some point a kind of "qubit reordering" would be needed) but for now it's good enough
 # -
 
-# ### Computational basis
-# Needs to be defined by hand, not optimal at all
+# ### Measurement POVM
+# We consider different possibilities of POVM on which one might want to measure its state. Mainly to compare with results of [https://arxiv.org/abs/2305.10723]
 
-def build_comp_basis (dim_tot):
+# #### Computational basis
+# Needs to be defined by hand, not optimal at all. The only plus side is that it is defined only once.
+
+def comp_basis_povm (dim_tot):
     return [qt.basis(dim_tot,z) for z in range (dim_tot)]
 
+
+# #### Bell basis
+# Results in [https://arxiv.org/abs/2305.10723] scramble only on $l=1$ qubit (local Cliffords) and then measure pairs on Bell basis
+
+# +
+def bell_basis ():
+    return [qt.bell_state(state=f'{i}{j}') for j in (0,1) for i in (0,1)]
+
+def bell_povm (no_qubits):
+    bell = bell_basis()
+    no_reps = int(no_qubits/2)
+    return [qt.Qobj(qt.tensor([el for el in line]).full()) for line in list(itertools.product(bell,repeat=no_reps))]
+
+
+# + [markdown] tags=[]
+# #### SIC-POVM
+# Actually substitutes the unitary scrambling instead of Clifford measurements. Since SIC-POVM form a 2-design, we expect not to have the same optimal scaling also for variance. For completeness, we keep the function to generate a full SIC-POVM; however, we mainly use the sampler for random POVM element chosen based on the Haar measure.
+
+# +
+def sic_povm(no_qubits):
+    return qb.sic_povm(2**no_qubits)
+
+def random_sic (dim_block):
+    return qb.random_haar_povm(dim_block, k=1, n=1, real=False).full()
+
+
+# -
 
 # ### Single-qubit Paulis
 # More or less the basic building blocks we'll always need
@@ -165,12 +196,14 @@ def tensor_sparse(*args):
     return out
 
 
-def sparse_l_matrix (qubits_per_block, dim_block, no_block, position):
+def sparse_l_matrix (qubits_per_block, dim_block, no_block, position, sic = False):
     
     no_id_before = [sc.sparse.identity(dim_block)] * (position) # since numbering starts at 0
     no_id_after  = [sc.sparse.identity(dim_block)] * (no_block - position - 1)
-    
-    unitary = stim.Tableau.random(qubits_per_block).to_unitary_matrix(endian='little')
+    if (sic):
+        unitary = random_sic(dim_block)
+    else:
+        unitary = stim.Tableau.random(qubits_per_block).to_unitary_matrix(endian='little')
     return tensor_sparse(no_id_before+[unitary]+no_id_after)
 
 
@@ -260,7 +293,8 @@ def classical_shadow_simulation (rho, obs, qb_block, qb_tot, n_tries, sparse):
 param_title = ["_obs",
                "_ntot",
                "_nblock",
-               "_eps"
+               "_eps",
+               "_meas",
               ]
 
 
@@ -279,7 +313,7 @@ def define_file_name (params, index): # thought to be, eventually, extended for 
 # ### Parameters from command line
 
 # +
-if (len(sys.argv) == 12):
+if (len(sys.argv) == 13):
     dir_header = sys.argv[1]
     n_qb_tot = int(sys.argv[2])
     n_qb_block = int(sys.argv[3])
@@ -291,6 +325,7 @@ if (len(sys.argv) == 12):
     load_obs = bool(sys.argv[9])
     obs_ind = int(sys.argv[10])
     sparse  = bool(sys.argv[11])
+    bell    = bool(sys.argv[12])
     
 else:
     dir_header = "MultipleQubit"
@@ -305,6 +340,7 @@ else:
     load_obs = False
     obs_ind = 0
     sparse  = False
+    bell    = False
 # -
 
 # ### Default parameters
@@ -321,7 +357,10 @@ else:
 
 expected_prefactor = prefactor(n_qb_block,n_qb_tot)
 
-comp_basis = build_comp_basis(qubit_dim**n_qb_tot)
+if (bell):
+    comp_basis = bell_basis(n_qb_tot)
+else:
+    comp_basis = comp_basis(qubit_dim**n_qb_tot)
 
 parameters = [obs_ind, n_qb_tot, n_qb_block, epsilon]
 # -
