@@ -26,7 +26,6 @@
 import numpy as np
 import scipy as sc
 import qutip as qt # handles all the quantum operations
-import qbism as qb
 import qfunk.generator as gg # used to randomly sample states 
 import stim 
 
@@ -72,18 +71,6 @@ def bell_povm (no_qubits):
     bell = bell_basis()
     no_reps = int(no_qubits/2)
     return [qt.Qobj(qt.tensor([el for el in line]).full()) for line in list(itertools.product(bell,repeat=no_reps))]
-
-
-# + [markdown] tags=[]
-# #### SIC-POVM
-# Actually substitutes the unitary scrambling instead of Clifford measurements. Since SIC-POVM form a 2-design, we expect not to have the same optimal scaling also for variance. For completeness, we keep the function to generate a full SIC-POVM; however, we mainly use the sampler for random POVM element chosen based on the Haar measure.
-
-# +
-def sic_povm(no_qubits):
-    return qb.sic_povm(2**no_qubits)
-
-def random_sic (dim_block):
-    return qb.random_haar_povm(dim_block, k=1, n=1, real=False).full()
 
 
 # -
