@@ -105,17 +105,22 @@ spin_array = [Sx,Sy,Sz]
 # -
 
 # ### Random observable sampler
+# Compared to the first version, it is actually better to store the *array* of Paulis and only afterwards to turn it into a tensor product. This is simpler when considering the POVM decomposition of the observable.
+# Moreover, since we're always using the data array more than the `qt.Qobj()`, it is actually equivalent to take the tensor product afterwards. 
+# In order to possibly handle also previous observables, a very basic `tensor_decomposition` mode is considered, to return a way to handle already "tensored" Paulis for POVM decomposition.
 
-def rand_pauli_sampler (obs_array, no_qubits, qubits_per_block):
-    no_blocks = int(no_qubits/qubits_per_block)   # not so useful for now, let's just keep it aside
-    no_obs = len(obs_array)
-    tot_obs = []
+def tensor_decomposition(observable, obs_array, no_qubits):
+    perms = list(itertools.product(obs_array, repeat=no_qubits))
     
-    for i in range(no_qubits):
-        ind = random.randint(0,no_obs-1)
-        tot_obs.append(obs_array[ind])
-    
-    return qt.Qobj(qt.tensor(tot_obs).full())      # operation needed so that dimensions are always compatible  
+    for element in perms:
+        if (np.allclose(observable, qt.tensor(list(element)).full())):
+            return list(element) # returns list of *qt.Qobj*
+        
+    return "ERROR" # check if loop never closes
+
+
+def rand_pauli_list (obs_array, no_qubits): # returns *list* of arrays instead of tensor product
+    return [obs_array[ind] for ind in np.random.randint(0,len(obs_array)-1,size=no_qubits)]
 
 
 # ## Random unitary sampler
@@ -196,17 +201,6 @@ def tensor_sparse(*args):
     return out
 
 
-def sparse_l_matrix (qubits_per_block, dim_block, no_block, position, sic = False):
-    
-    no_id_before = [sc.sparse.identity(dim_block)] * (position) # since numbering starts at 0
-    no_id_after  = [sc.sparse.identity(dim_block)] * (no_block - position - 1)
-    if (sic):
-        unitary = random_sic(dim_block)
-    else:
-        unitary = stim.Tableau.random(qubits_per_block).to_unitary_matrix(endian='little')
-    return tensor_sparse(no_id_before+[unitary]+no_id_after)
-
-
 def sparse_whole_matrix ( qubits_per_block,no_block, position):
 
     dim_before = 2**(qubits_per_block*position)
@@ -219,20 +213,6 @@ def sparse_whole_matrix ( qubits_per_block,no_block, position):
 def clifford_unitary (qubits_per_block):
     return sc.sparse.csr_matrix(stim.Tableau.random(qubits_per_block).to_unitary_matrix(endian='little'))
 
-
-# +
-def id_sparse_list (no_qubits,qubits_per_block):
-    no_blocks = int(no_qubits/qubits_per_block)
-    dim_block = 2**qubits_per_block
-    return [sc.sparse.identity(dim_block)]*no_blocks
-
-def listsparse_l_matrix (no_qubits, qubits_per_block, position, which_list):
-    unitary = stim.Tableau.random(qubits_per_block).to_unitary_matrix(endian='little')
-
-    return tensor_sparse(which_list[:position] + [unitary] + which_list[position+1:])
-
-
-# -
 
 # #### Snapshot generator
 
@@ -338,7 +318,7 @@ else:
     n_traj = 1 #int(2* prefactor(1, n_qb_tot)/epsilon**2)
     load_state = False
     load_obs = False
-    obs_ind = 0
+    obs_ind = 1
     sparse  = False
     bell_bool  = True
 # -
@@ -394,7 +374,7 @@ state_file = dir_header+f"_state_{n_qb_tot}_qubits.npy"
 
 if (load_state):
     try:
-        rho = qt.Qobj(np.array(np.load(main_dir + state_file)))
+        rho = np.array(np.load(main_dir + state_file))
     except IOError: # if, for the first time, the state is not present
         rho = qt.rand_ket(dim_tot)  # using a pure state is equivalent but advantageous numerically
         rho = qt.ket2dm(rho)
@@ -409,20 +389,28 @@ else:
 obs_file = dir_header+f"_obs{obs_ind}_{n_qb_tot}_qubits.npy"
 if (load_obs):
     try:
-        obs = qt.Qobj(np.array(np.load(obs_dir + obs_file)))
+        obs = np.array(np.load(obs_dir + obs_file))
+        if (len(obs) == 1):
+            obs = tensor_decomposition(obs, spin_array, n_qb_tot) # turns full observable into list of Paulis
     except:
-        obs = rand_pauli_sampler (spin_array, n_qb_tot, n_qb_block) 
-        np.save(obs_dir + obs_file, obs.full())
+        obs = rand_pauli_list (spin_array, n_qb_tot) 
+        np.save(obs_dir + obs_file, obs)
 else:
-    obs = rand_pauli_sampler (spin_array, n_qb_tot, n_qb_block) 
-    np.save(obs_dir + obs_file, obs.full())
+    obs = rand_pauli_list (spin_array, n_qb_tot) 
+    np.save(obs_dir + obs_file, obs)
 
 # If we're considering sparse matrices, turns `qt.Qobj` into a sparse matrix. Since sometimes it starts from a `np.array`, in general it's not the smartest move. For now we'll manage…
 
-true_expectation_value = (rho*obs).tr()
+# +
 if (sparse):
     rho = sc.sparse.csr_matrix(rho.full())
+    obs = qt.tensor([qt.Qobj(o) for o in obs])
     obs = sc.sparse.csr_matrix(obs.full())
+    
+else:
+    rho = qt.Qobj(rho)
+    obs = qt.Qobj(qt.tensor(obs).full()) # adapts to correct dimensions
+# -
 
 # ## Classical shadow collection
 
