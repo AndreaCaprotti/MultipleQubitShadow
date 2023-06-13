@@ -338,7 +338,11 @@ class cs_collection ():
     
     def __find_eval(self):
         rho = qt.Qobj(np.array(np.load(self.state_path)))
-        obs = qt.Qobj(np.array(np.load(self.obs_path)))
+        load_array = np.array(np.load(self.obs_path))
+        if (len(load_array)==1):
+            obs = qt.Qobj(load_array)
+        else:                  # consideres possibility of having saved only array of Paulis instead of full observable
+            obs = qt.Qobj(qt.tensor([qt.Qobj(el) for el in load_array]).full())
         
         return np.real((rho*obs).tr())
     
