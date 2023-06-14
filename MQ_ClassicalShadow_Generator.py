@@ -50,12 +50,13 @@ import os
 # For now, we consider tensor products of non-trivial Paulis. This shold not be the general case (at some point a kind of "qubit reordering" would be needed) but for now it's good enough
 # -
 
-# ### `NumPy`-specific tensor product
+# ### Tensor product
+# Recognises data type
 
 # +
 # Tensor product defined on a list of variable as in QuTiP
 
-def tensor_np(*args):
+def tensor(*args):
     if not args:
         raise TypeError("Requires at least one input argument")
 
@@ -79,7 +80,11 @@ def tensor_np(*args):
             out = q
             
         else:
-            out  = np.kron(out, q)
+            if isinstance(out, np.ndarray):
+                out  = np.kron(out, q)
+            elif isinstance(out, sc.sparse._arrays.csr_matrix):
+                out  = sc.sparse.kron(out, q)
+                
     return out
 
 
@@ -135,7 +140,7 @@ def tensor_decomposition(observable, obs_array, no_qubits):
     perms = itertools.product(obs_array, repeat=no_qubits)
     
     for element in perms:
-        if (np.allclose(observable, tensor_np(list(element)))):
+        if (np.allclose(observable, tensor(list(element)))):
             return list(element) # returns list of *np.array*
         
     raise TypeError("Unable to find decomposition")
@@ -193,35 +198,7 @@ def mq_cs_direct_estimation (state, observable, basis, no_qubits, qubits_per_blo
 
 # ### Optimized sparse multiplication
 
-# #### Tensor product and sparse unitary generator
-
-def tensor_sparse(*args):
-    if not args:
-        raise TypeError("Requires at least one input argument")
-
-    if len(args) == 1 and isinstance(args[0], (list, np.ndarray)):
-        # this is the case when tensor is called on the form:
-        # tensor([q1, q2, q3, ...])
-        qlist = args[0]
-
-    elif len(args) == 1 and isinstance(args[0], Qobj):
-        # tensor is called with a single Qobj as an argument, do nothing
-        return args[0]
-
-    else:
-        # this is the case when tensor is called on the form:
-        # tensor(q1, q2, q3, ...)
-        qlist = args
-    
-    out = [1]
-    for n, q in enumerate(qlist):
-        if n == 0:
-            out = q
-            
-        else:
-            out  = sc.sparse.kron(out, q)
-    return out
-
+# #### Sparse unitary generator
 
 def sparse_whole_matrix ( qubits_per_block,no_block, position):
 
@@ -229,7 +206,7 @@ def sparse_whole_matrix ( qubits_per_block,no_block, position):
     dim_after  = 2**(qubits_per_block*(no_block - position-1))
     
     unitary = stim.Tableau.random(qubits_per_block).to_unitary_matrix(endian='little')
-    return tensor_sparse(sc.sparse.identity(dim_before),unitary,sc.sparse.identity(dim_after))
+    return tensor(sc.sparse.identity(dim_before),unitary,sc.sparse.identity(dim_after))
 
 
 def clifford_unitary (qubits_per_block):
@@ -323,13 +300,13 @@ if (len(sys.argv) == 11):
     n_runs = int(sys.argv[5])
     init_run = int(sys.argv[6])
     n_traj = int(sys.argv[7])
-    load_state = int(sys.argv[8])
+    obs_ind = int(sys.argv[8])
     sparse  = int(sys.argv[9])
     bell_bool = int(sys.argv[10])
     
 else:
     dir_header = "MultipleQubit"
-    n_qb_tot = 8
+    n_qb_tot = 4
     n_qb_block = 1
     epsilon = 0.5
     n_runs = 1 # test 
@@ -409,7 +386,7 @@ try:
     obs = np.array(np.load(obs_dir + obs_file))
     if (len(obs) == dim_tot): # guarantees to consider only full tensor products
         obs = tensor_decomposition(obs, spin_array, n_qb_tot) # turns full observable into list of Paulis
-except:
+except IOError:
     obs = rand_pauli_list (spin_array, n_qb_tot) 
     np.save(obs_dir + obs_file, obs)
 
@@ -418,14 +395,12 @@ except:
 # +
 if (sparse):
     rho = sc.sparse.csr_matrix(rho)
-    obs = sc.sparse.csr_matrix(tensor_np(obs))
+    obs = sc.sparse.csr_matrix(tensor(obs))
     
 else:
     rho = qt.Qobj(rho)
-    obs = qt.Qobj(tensor_np(obs)) # adapts to correct dimensions
+    obs = qt.Qobj(tensor(obs)) # adapts to correct dimensions
 # -
-
-rho.shape
 
 # ## Classical shadow collection
 

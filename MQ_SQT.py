@@ -39,12 +39,12 @@ import os
 # For now, we consider tensor products of non-trivial Paulis. This shold not be the general case (at some point a kind of "qubit reordering" would be needed) but for now it's good enough
 # -
 
-# ### `NumPy`-specific tensor product
+# ### Generic tensor product
 
 # +
 # Tensor product defined on a list of variable as in QuTiP
 
-def tensor_np(*args):
+def tensor(*args):
     if not args:
         raise TypeError("Requires at least one input argument")
 
@@ -68,7 +68,10 @@ def tensor_np(*args):
             out = q
             
         else:
-            out  = np.kron(out, q)
+            if isinstance (out, np.ndarray):
+                out  = np.kron(out, q)
+            elif isinstance(out, sc.sparse._arrays.csr_matrix):
+                out  = sc.sparse.kron(out, q)
     return out
 
 
@@ -116,7 +119,7 @@ def tensor_decomposition(observable, obs_array, no_qubits):
     perms = list(itertools.product(obs_array, repeat=no_qubits))
     
     for element in perms:
-        if (np.allclose(observable, tensor_np(list(element)))):
+        if (np.allclose(observable, tensor(list(element)))):
             return list(element) # returns list of *qt.Qobj*
     
     raise TypeError("Decomposition not possible")
@@ -160,42 +163,14 @@ def sample_from_vec(prob_vec_cumulative):
 
 # ### Optimized sparse multiplication
 
-# #### Tensor product and sparse unitary generator
-
-def tensor_sparse(*args):
-    if not args:
-        raise TypeError("Requires at least one input argument")
-
-    if len(args) == 1 and isinstance(args[0], (list, np.ndarray)):
-        # this is the case when tensor is called on the form:
-        # tensor([q1, q2, q3, ...])
-        qlist = args[0]
-
-    elif len(args) == 1 and isinstance(args[0], Qobj):
-        # tensor is called with a single Qobj as an argument, do nothing
-        return args[0]
-
-    else:
-        # this is the case when tensor is called on the form:
-        # tensor(q1, q2, q3, ...)
-        qlist = args
-    
-    out = [1]
-    for n, q in enumerate(qlist):
-        if n == 0:
-            out = q
-            
-        else:
-            out  = sc.sparse.kron(out, q)
-    return out
-
+# #### Sparse unitary generator
 
 def sparse_whole_matrix (element,  qubits_per_block, no_block, position):
 
     dim_before = 2**(qubits_per_block*position)
     dim_after  = 2**(qubits_per_block*(no_block - position-1))
     
-    return tensor_sparse(sc.sparse.identity(dim_before),element,sc.sparse.identity(dim_after))
+    return tensor(sc.sparse.identity(dim_before),element,sc.sparse.identity(dim_after))
 
 
 # ## File save
@@ -237,7 +212,7 @@ if (len(sys.argv) == 9):
     obs_ind = int(sys.argv[8])
     
 else:
-    dir_header = "1Tata"
+    dir_header = "7Adli"
     n_qb_tot = 4
     n_qb_block = 2
     epsilon = 1
@@ -293,18 +268,18 @@ try:
 except IOError: # if, for the first time, the state is not present
     rho = qt.rand_ket(dim_tot)  # using a pure state is equivalent but advantageous numerically
     rho = qt.ket2dm(rho).data.toarray()
-    np.save(main_dir + state_file, rho.data.toarray())
+    np.save(main_dir + state_file, rho)
     print("I've saved a new file!")
 # -
 
-obs_file = dir_header+f"_obs{obs_ind}_{n_qb_tot}_qubits.npy"
+obs_file = dir_header+f"_obs{obs_ind}_{n_qb_tot}_qubits"
 try:
-    obs = np.array(np.load(obs_dir + obs_file))
+    obs = np.array(np.load(obs_dir + obs_file+".npy"))
     if (len(obs) == dim_tot):  # guarantee for previous scheme
         obs = tensor_decomposition(obs, spin_array, n_qb_tot) # turns full observable into list of Paulis
-except:
+except IOError:
     obs = rand_pauli_list (spin_array, n_qb_tot) 
-    np.save(obs_dir + obs_file, obs)
+    np.save(obs_dir + obs_file+".npy", obs)
 
 # If we're considering sparse matrices, turns `qt.Qobj` into a sparse matrix. Since sometimes it starts from a `np.array`, in general it's not the smartest move. For now we'll manage…
 
@@ -325,11 +300,20 @@ coeff_mat = np.array([np.ndarray.flatten(array.data.toarray()) for array in povm
 sampling_distribution = []
 
 for j in range(no_of_blocks):
-    subsystem = np.ndarray.flatten(tensor_np([ obs[i] for i in np.arange((j)*n_qb_block,(j+1)*n_qb_block)]))
+    decomposition_name = obs_dir+obs_file+f"_nblock_{n_qb_block}_index_{j}"
+    
+    try:
+        vec = np.array(np.load(decomposition_name+'.npy'))
+    except IOError: 
+        subsystem = np.ndarray.flatten(tensor([ obs[i] for i in np.arange((j)*n_qb_block,(j+1)*n_qb_block)]))
+        vec = np.real(sc.linalg.solve(coeff_mat, subsystem))
+        np.save(decomposition_name, vec)
+    
+    norm_vec = np.abs(vec) /np.sum(np.abs(vec))
+    
+    prob_vec = prob_vec_to_sample(norm_vec)
+    sampling_distribution.append(prob_vec)
 
-    vec = np.real(sc.linalg.solve(coeff_mat, subsystem))
-    vec = np.abs(vec) /np.sum(np.abs(vec))
-    sampling_distribution.append(prob_vec_to_sample(vec))
 # -
 
 # ## Classical shadow collection
