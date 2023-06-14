@@ -51,7 +51,7 @@ import os
 # -
 
 # ### Tensor product
-# Recognises data type
+# Recognises data type, either `numpy.ndarray` or `sc.sparse` (actually it should have a more precise data type recognition between different sparse matrices, but for now good enough)
 
 # +
 # Tensor product defined on a list of variable as in QuTiP
@@ -205,7 +205,7 @@ def sparse_whole_matrix ( qubits_per_block,no_block, position):
     dim_before = 2**(qubits_per_block*position)
     dim_after  = 2**(qubits_per_block*(no_block - position-1))
     
-    unitary = stim.Tableau.random(qubits_per_block).to_unitary_matrix(endian='little')
+    unitary = sc.sparse.csr_matrix(stim.Tableau.random(qubits_per_block).to_unitary_matrix(endian='little'))
     return tensor(sc.sparse.identity(dim_before),unitary,sc.sparse.identity(dim_after))
 
 

@@ -70,7 +70,7 @@ def tensor(*args):
         else:
             if isinstance (out, np.ndarray):
                 out  = np.kron(out, q)
-            elif isinstance(out, sc.sparse._arrays.csr_matrix):
+            else:
                 out  = sc.sparse.kron(out, q)
     return out
 
@@ -170,7 +170,7 @@ def sparse_whole_matrix (element,  qubits_per_block, no_block, position):
     dim_before = 2**(qubits_per_block*position)
     dim_after  = 2**(qubits_per_block*(no_block - position-1))
     
-    return tensor(sc.sparse.identity(dim_before),element,sc.sparse.identity(dim_after))
+    return tensor([sc.sparse.identity(dim_before),element,sc.sparse.identity(dim_after)])
 
 
 # ## File save
@@ -290,8 +290,8 @@ except IOError:
 # +
 povm = qb.sic_povm(dim_block)
 
-array_povm = [el.data.toarray() for el in povm]
-coeff_mat = np.array([np.ndarray.flatten(array.data.toarray()) for array in povm]).transpose()
+array_povm = [sc.sparse.csr_matrix(el.data.toarray()) for el in povm]
+coeff_mat = np.array([np.ndarray.flatten(el.data.toarray()) for el in povm]).transpose()
 # -
 
 # #### Observable decomposition
@@ -327,10 +327,9 @@ for i in range(init_run, init_run+n_runs):
         for j in range(no_of_blocks):
             k = sample_from_vec(sampling_distribution[j])
             povm_el = array_povm[k]
-
             ind.append(k)
-            povm_el = sparse_whole_matrix (povm_el, n_qb_block, no_of_blocks, j)
-            rot_rho = povm_el@rot_rho
+            povm_element = sparse_whole_matrix (povm_el, n_qb_block, no_of_blocks, j)
+            rot_rho = povm_element@rot_rho
         exp_val = np.real((sc.sparse.csr_matrix(rot_rho)).trace())
         
         save_array.append([exp_val,exp_val**2]+ind)
