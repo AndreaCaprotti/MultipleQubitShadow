@@ -50,6 +50,41 @@ import os
 # For now, we consider tensor products of non-trivial Paulis. This shold not be the general case (at some point a kind of "qubit reordering" would be needed) but for now it's good enough
 # -
 
+# ### `NumPy`-specific tensor product
+
+# +
+# Tensor product defined on a list of variable as in QuTiP
+
+def tensor_np(*args):
+    if not args:
+        raise TypeError("Requires at least one input argument")
+
+    if len(args) == 1 and isinstance(args[0], (list, np.ndarray)):
+        # this is the case when tensor is called on the form:
+        # tensor([q1, q2, q3, ...])
+        qlist = args[0]
+
+    elif len(args) == 1 and isinstance(args[0], Qobj):
+        # tensor is called with a single Qobj as an argument, do nothing
+        return args[0]
+
+    else:
+        # this is the case when tensor is called on the form:
+        # tensor(q1, q2, q3, ...)
+        qlist = args
+    
+    out = [1]
+    for n, q in enumerate(qlist):
+        if n == 0:
+            out = q
+            
+        else:
+            out  = np.kron(out, q)
+    return out
+
+
+# -
+
 # ### Measurement POVM
 # We consider different possibilities of POVM on which one might want to measure its state. Mainly to compare with results of [https://arxiv.org/abs/2305.10723]
 
@@ -80,10 +115,10 @@ def bell_povm (no_qubits):
 
 # + tags=[]
 qubit_d = 2
-Id2 = qt.qeye(qubit_d)
-Sx  = qt.sigmax()
-Sy  = qt.sigmay()
-Sz  = qt.sigmaz()
+Id2 = np.identity(qubit_d)
+Sx  = np.array([[0,  1. ],[1., 0]])
+Sy  = np.array([[0, -1.j],[1.j,0]])
+Sz  = np.array([[1., 0  ],[0, -1]])
 
 pauli_array = [Id2,Sx,Sy,Sz]
 spin_array = [Sx,Sy,Sz]
@@ -97,12 +132,13 @@ spin_array = [Sx,Sy,Sz]
 # In order to possibly handle also previous observables, a very basic `tensor_decomposition` mode is considered, to return a way to handle already "tensored" Paulis for POVM decomposition.
 
 def tensor_decomposition(observable, obs_array, no_qubits):
-    perms = list(itertools.product(obs_array, repeat=no_qubits))
+    perms = itertools.product(obs_array, repeat=no_qubits)
     
     for element in perms:
-        if (np.allclose(observable, qt.tensor(list(element)).full())):
-            return list(element) # returns list of *qt.Qobj*
+        if (np.allclose(observable, tensor_np(list(element)))):
+            return list(element) # returns list of *np.array*
         
+    raise TypeError("Unable to find decomposition")
     return "ERROR" # check if loop never closes
 
 
@@ -123,14 +159,12 @@ def tot_clifford_sampler (no_qubits, qubits_per_block):
 
 # ## Classical snapshot expectation value 
 # In general, one should build a classical snapshot, store it and then use it to estimate the expectation value of some observable afterwards (in order to also possibly reuse data for other observables). Since this requires a non-trivial ammount of storage space, for now we just use a faster version which already considers the observable to be evaluated.
-#
-# Now 
 
 def prefactor (qubits_per_block,locality):
     return (2**qubits_per_block+1)**(locality/qubits_per_block)
 
 
-# ### First *basic* example
+# ### `QuTiP` built-in functions
 
 # +
 def mq_classical_snapshot (state, basis, no_qubits, qubits_per_block): # "actual" version
@@ -146,6 +180,7 @@ def mq_cs_direct_estimation (state, observable, basis, no_qubits, qubits_per_blo
     pref = prefactor(qubits_per_block,no_qubits)
     
     unitary = tot_clifford_sampler(no_qubits, qubits_per_block)
+
     rot_rho = unitary*state*unitary.dag()
     rot_rho = rot_rho/rot_rho.tr()     # normalization needed, since unitaries are not *exactly* unitary
 
@@ -280,7 +315,7 @@ def define_file_name (params, index): # thought to be, eventually, extended for 
 # ### Parameters from command line
 
 # +
-if (len(sys.argv) == 13):
+if (len(sys.argv) == 11):
     dir_header = sys.argv[1]
     n_qb_tot = int(sys.argv[2])
     n_qb_block = int(sys.argv[3])
@@ -289,10 +324,8 @@ if (len(sys.argv) == 13):
     init_run = int(sys.argv[6])
     n_traj = int(sys.argv[7])
     load_state = int(sys.argv[8])
-    load_obs = int(sys.argv[9])
-    obs_ind = int(sys.argv[10])
-    sparse  = int(sys.argv[11])
-    bell_bool = int(sys.argv[12])
+    sparse  = int(sys.argv[9])
+    bell_bool = int(sys.argv[10])
     
 else:
     dir_header = "MultipleQubit"
@@ -300,15 +333,14 @@ else:
     n_qb_block = 1
     epsilon = 0.5
     n_runs = 1 # test 
-    init_run = 0 # fail-safe in case of interruption
-    #n_runs = 30 # statistical significance
+    init_run = 100 # fail-safe in case of interruption
     n_traj = 1 #int(2* prefactor(1, n_qb_tot)/epsilon**2)
-    load_state = False
-    load_obs = False
     obs_ind = 1
     sparse  = False
-    bell_bool  = True
+    bell_bool  = False
 # -
+
+
 
 # ### Default parameters
 
@@ -352,6 +384,10 @@ os.system(f'mkdir -p {dir_name}') #should only create it once…
 
 # -
 
+obs_file = dir_header+f"_obs{obs_ind}_{n_qb_tot}_qubits.npy"
+obs = np.array(np.load(obs_dir + obs_file))
+len(obs)
+
 # The following save the states and observables for future use, or load more if already present.
 # NB: it's actually better in these cases to save everything in .npy format: not readable but much more convenient
 
@@ -359,30 +395,21 @@ os.system(f'mkdir -p {dir_name}') #should only create it once…
 # header specifies state
 state_file = dir_header+f"_state_{n_qb_tot}_qubits.npy"
 
-if (load_state):
-    try:
-        rho = np.array(np.load(main_dir + state_file))
-    except IOError: # if, for the first time, the state is not present
-        rho = qt.rand_ket(dim_tot)  # using a pure state is equivalent but advantageous numerically
-        rho = qt.ket2dm(rho)
-        np.save(main_dir + state_file, rho.full())
-        print("I've saved a new file!")
-else:
-    rho = qt.rand_ket(dim_tot)
-    rho = qt.ket2dm(rho)
-    np.save(main_dir + state_file, rho.full())
+try:
+    rho = np.array(np.load(main_dir + state_file))
+except IOError: # if, for the first time, the state is not present
+    rho = qt.rand_ket(dim_tot)  # using a pure state is equivalent but advantageous numerically
+    rho = qt.ket2dm(rho).full()
+    np.save(main_dir + state_file, rho)
+    print("I've saved a new file!")
 # -
 
 obs_file = dir_header+f"_obs{obs_ind}_{n_qb_tot}_qubits.npy"
-if (load_obs):
-    try:
-        obs = np.array(np.load(obs_dir + obs_file))
-        if (len(obs) == 1):
-            obs = tensor_decomposition(obs, spin_array, n_qb_tot) # turns full observable into list of Paulis
-    except:
-        obs = rand_pauli_list (spin_array, n_qb_tot) 
-        np.save(obs_dir + obs_file, obs)
-else:
+try:
+    obs = np.array(np.load(obs_dir + obs_file))
+    if (len(obs) == dim_tot): # guarantees to consider only full tensor products
+        obs = tensor_decomposition(obs, spin_array, n_qb_tot) # turns full observable into list of Paulis
+except:
     obs = rand_pauli_list (spin_array, n_qb_tot) 
     np.save(obs_dir + obs_file, obs)
 
@@ -390,14 +417,15 @@ else:
 
 # +
 if (sparse):
-    rho = sc.sparse.csr_matrix(rho.full())
-    obs = qt.tensor([qt.Qobj(o) for o in obs])
-    obs = sc.sparse.csr_matrix(obs.full())
+    rho = sc.sparse.csr_matrix(rho)
+    obs = sc.sparse.csr_matrix(tensor_np(obs))
     
 else:
     rho = qt.Qobj(rho)
-    obs = qt.Qobj(qt.tensor(obs).full()) # adapts to correct dimensions
+    obs = qt.Qobj(tensor_np(obs)) # adapts to correct dimensions
 # -
+
+rho.shape
 
 # ## Classical shadow collection
 

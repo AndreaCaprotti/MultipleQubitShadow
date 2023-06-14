@@ -13,8 +13,9 @@
 #     name: python3
 # ---
 
-# # Simulation Handler
+# # Simulation Handler - SQOT
 # Just some quicks lines of code to simplify my life in handling multiple simulations at the same time
+#
 
 import numpy as np
 import time   # for time comparison and optimization
@@ -26,7 +27,7 @@ def prefactor (qubits_per_block,locality):
     return (2**qubits_per_block+1)**(locality/qubits_per_block)
 
 
-save = False
+save = True
 
 # +
 header = ["7Adli"]
@@ -38,20 +39,16 @@ n_runs = 10
 init_runs = 0 # also to add
 no_diff_obs = 1
 
-sparse = 1
-bell   = [1,0]
-
-for b in bell:
-    for head in header:
-        for obs in range(0,no_diff_obs):
-            for nb in n_blocks:
-                for e in epsilon:
-                    n_traj = int(1.5*prefactor(nb, n_qubits)/(e**2))
-                    command_line = f' {head} {int(n_qubits)} {int(nb)} {e} {int(n_runs)} {int(init_runs)} {int(n_traj)} {obs} {sparse} {b}'
-                    if (save):
-                        time_start = time.time()
-                        os.system(f'python MQ_ClassicalShadow_Generator.py {command_line}')
-                        print (time.time()-time_start, command_line)
+for head in header:
+    for obs in range(0,no_diff_obs):
+        for nb in n_blocks:
+            for e in epsilon:
+                n_traj = int(1.5*prefactor(nb, n_qubits)/(e**2))
+                command_line = f' {head} {int(n_qubits)} {int(nb)} {e} {int(n_runs)} {int(init_runs)} {int(n_traj)} {obs}'
+                if (save):
+                    time_start = time.time()
+                    os.system(f'python MQ_SQT.py {command_line}')
+                    print (time.time()-time_start, command_line)
 # -
 
 

@@ -39,6 +39,41 @@ import os
 # For now, we consider tensor products of non-trivial Paulis. This shold not be the general case (at some point a kind of "qubit reordering" would be needed) but for now it's good enough
 # -
 
+# ### `NumPy`-specific tensor product
+
+# +
+# Tensor product defined on a list of variable as in QuTiP
+
+def tensor_np(*args):
+    if not args:
+        raise TypeError("Requires at least one input argument")
+
+    if len(args) == 1 and isinstance(args[0], (list, np.ndarray)):
+        # this is the case when tensor is called on the form:
+        # tensor([q1, q2, q3, ...])
+        qlist = args[0]
+
+    elif len(args) == 1 and isinstance(args[0], Qobj):
+        # tensor is called with a single Qobj as an argument, do nothing
+        return args[0]
+
+    else:
+        # this is the case when tensor is called on the form:
+        # tensor(q1, q2, q3, ...)
+        qlist = args
+    
+    out = [1]
+    for n, q in enumerate(qlist):
+        if n == 0:
+            out = q
+            
+        else:
+            out  = np.kron(out, q)
+    return out
+
+
+# -
+
 # ### Measurement POVM
 # We consider different possibilities of POVM on which one might want to measure its state. Mainly to compare with results of [https://arxiv.org/abs/2305.10723]
 
@@ -61,10 +96,10 @@ def random_sic (dim_block):
 
 # + tags=[]
 qubit_d = 2
-Id2 = qt.qeye(qubit_d)
-Sx  = qt.sigmax()
-Sy  = qt.sigmay()
-Sz  = qt.sigmaz()
+Id2 = np.identity(qubit_d)
+Sx  = np.array([[0,  1. ],[1., 0]])
+Sy  = np.array([[0, -1.j],[1.j,0]])
+Sz  = np.array([[1., 0  ],[0, -1]])
 
 pauli_array = [Id2,Sx,Sy,Sz]
 spin_array = [Sx,Sy,Sz]
@@ -81,9 +116,10 @@ def tensor_decomposition(observable, obs_array, no_qubits):
     perms = list(itertools.product(obs_array, repeat=no_qubits))
     
     for element in perms:
-        if (np.allclose(observable, qt.tensor(list(element)).full())):
+        if (np.allclose(observable, tensor_np(list(element)))):
             return list(element) # returns list of *qt.Qobj*
-        
+    
+    raise TypeError("Decomposition not possible")
     return "ERROR" # check if loop never closes
 
 
@@ -190,27 +226,25 @@ def define_file_name (params, index): # thought to be, eventually, extended for 
 # ### Parameters from command line
 
 # +
-if (len(sys.argv) == 10):
+if (len(sys.argv) == 9):
     dir_header = sys.argv[1]
     n_qb_tot = int(sys.argv[2])
     n_qb_block = int(sys.argv[3])
-    n_runs = int(sys.argv[4])
-    init_run = int(sys.argv[5])
-    n_traj = int(sys.argv[6])
-    load_state = int(sys.argv[7])
-    load_obs = int(sys.argv[8])
-    obs_ind = int(sys.argv[9])
+    epsilon = sys.argv[4]
+    n_runs = int(sys.argv[5])
+    init_run = int(sys.argv[6])
+    n_traj = int(sys.argv[7])
+    obs_ind = int(sys.argv[8])
     
 else:
-    dir_header = "MultipleQubit"
+    dir_header = "1Tata"
     n_qb_tot = 4
     n_qb_block = 2
+    epsilon = 1
     n_runs = 1 # test 
-    init_run = 0 # fail-safe in case of interruption
-    n_traj = 10 #int(2* prefactor(1, n_qb_tot)/epsilon**2)
-    load_state = False
-    load_obs = False
-    obs_ind = 1
+    init_run = 100 # fail-safe in case of interruption
+    n_traj = 1 #int(2* prefactor(1, n_qb_tot)/epsilon**2)
+    obs_ind = 0
 # -
 
 # ### Default parameters
@@ -254,30 +288,21 @@ os.system(f'mkdir -p {dir_name}') #should only create it once…
 # header specifies state
 state_file = dir_header+f"_state_{n_qb_tot}_qubits.npy"
 
-if (load_state):
-    try:
-        rho = np.array(np.load(main_dir + state_file))
-    except IOError: # if, for the first time, the state is not present
-        rho = qt.rand_ket(dim_tot)  # using a pure state is equivalent but advantageous numerically
-        rho = qt.ket2dm(rho)
-        np.save(main_dir + state_file, rho.full())
-        print("I've saved a new file!")
-else:
-    rho = qt.rand_ket(dim_tot)
-    rho = qt.ket2dm(rho)
-    np.save(main_dir + state_file, rho.full())
+try:
+    rho = np.array(np.load(main_dir + state_file))
+except IOError: # if, for the first time, the state is not present
+    rho = qt.rand_ket(dim_tot)  # using a pure state is equivalent but advantageous numerically
+    rho = qt.ket2dm(rho).data.toarray()
+    np.save(main_dir + state_file, rho.data.toarray())
+    print("I've saved a new file!")
 # -
 
 obs_file = dir_header+f"_obs{obs_ind}_{n_qb_tot}_qubits.npy"
-if (load_obs):
-    try:
-        obs = np.array(np.load(obs_dir + obs_file))
-        if (len(obs) == 1):
-            obs = tensor_decomposition(obs, spin_array, n_qb_tot) # turns full observable into list of Paulis
-    except:
-        obs = rand_pauli_list (spin_array, n_qb_tot) 
-        np.save(obs_dir + obs_file, obs)
-else:
+try:
+    obs = np.array(np.load(obs_dir + obs_file))
+    if (len(obs) == dim_tot):  # guarantee for previous scheme
+        obs = tensor_decomposition(obs, spin_array, n_qb_tot) # turns full observable into list of Paulis
+except:
     obs = rand_pauli_list (spin_array, n_qb_tot) 
     np.save(obs_dir + obs_file, obs)
 
@@ -292,7 +317,6 @@ povm = qb.sic_povm(dim_block)
 
 array_povm = [el.data.toarray() for el in povm]
 coeff_mat = np.array([np.ndarray.flatten(array.data.toarray()) for array in povm]).transpose()
-coeff_mat = build_coef_mat (povm).transpose()
 # -
 
 # #### Observable decomposition
@@ -301,7 +325,7 @@ coeff_mat = build_coef_mat (povm).transpose()
 sampling_distribution = []
 
 for j in range(no_of_blocks):
-    subsystem = np.ndarray.flatten(qt.tensor([ obs[i] for i in np.arange((j)*n_qb_block,(j+1)*n_qb_block)]).data.toarray())
+    subsystem = np.ndarray.flatten(tensor_np([ obs[i] for i in np.arange((j)*n_qb_block,(j+1)*n_qb_block)]))
 
     vec = np.real(sc.linalg.solve(coeff_mat, subsystem))
     vec = np.abs(vec) /np.sum(np.abs(vec))
@@ -314,10 +338,10 @@ for i in range(init_run, init_run+n_runs):
     save_array=[]
     
     for t in range(n_traj):        
-        rot_rho = rho.data.toarray()
+        rot_rho = rho
         ind = []
         for j in range(no_of_blocks):
-            k = sample_from_vec(sampling_distribution[i])
+            k = sample_from_vec(sampling_distribution[j])
             povm_el = array_povm[k]
 
             ind.append(k)
