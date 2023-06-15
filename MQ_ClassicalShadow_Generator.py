@@ -65,7 +65,7 @@ def tensor(*args):
         # tensor([q1, q2, q3, ...])
         qlist = args[0]
 
-    elif len(args) == 1 and isinstance(args[0], Qobj):
+    elif len(args) == 1 and isinstance(args[0], qt.Qobj):
         # tensor is called with a single Qobj as an argument, do nothing
         return args[0]
 
@@ -82,7 +82,7 @@ def tensor(*args):
         else:
             if isinstance(out, np.ndarray):
                 out  = np.kron(out, q)
-            elif isinstance(out, sc.sparse._arrays.csr_matrix):
+            else:
                 out  = sc.sparse.kron(out, q)
                 
     return out
@@ -181,12 +181,17 @@ def mq_classical_snapshot (state, basis, no_qubits, qubits_per_block): # "actual
     
     return pref*(unitary.dag()*state*unitary)
 
-def mq_cs_direct_estimation (state, observable, basis, no_qubits, qubits_per_block): # faster, direct version
+def mq_cs_direct_estimation (state, observable, basis, no_qubits, qubits_per_block, pure): # faster, direct version
     pref = prefactor(qubits_per_block,no_qubits)
     
     unitary = tot_clifford_sampler(no_qubits, qubits_per_block)
 
-    rot_rho = unitary*state*unitary.dag()
+    if (pure):
+        rot_rho = unitary*state
+        rot_rho = qt.ket2dm(rot_rho)
+    else:
+        rot_rho = unitary*state*unitary.dag()
+    
     rot_rho = rot_rho/rot_rho.tr()     # normalization needed, since unitaries are not *exactly* unitary
 
     meas, cond_state = qt.measurement.measure(rot_rho, basis)
@@ -218,7 +223,7 @@ def clifford_unitary (qubits_per_block):
 # + tags=[]
 # Handles unitary evolution on sc.sparse matrices
 
-def mq_cs_sparse_estimation (state, observable, basis, no_qubits, qubits_per_block):  
+def mq_cs_sparse_estimation (state, observable, basis, no_qubits, qubits_per_block, pure):  
     pref = prefactor(qubits_per_block,no_qubits)
     no_block = int(no_qubits/qubits_per_block)
     dim_block = 2**qubits_per_block
@@ -230,10 +235,16 @@ def mq_cs_sparse_estimation (state, observable, basis, no_qubits, qubits_per_blo
         else:
             unitary = sparse_whole_matrix (qubits_per_block, no_block, j)
             
-        rot_rho = unitary@rot_rho@unitary.H
+        if (pure):
+            rot_rho = unitary@rot_rho
+        else:
+            rot_rho = unitary@rot_rho@unitary.H
+            
         observable = unitary@observable@unitary.H
 
     state = qt.Qobj(rot_rho)
+    if (pure):
+        state = qt.ket2dm(state)
 
     meas, cond_state = qt.measurement.measure(state/state.tr(), basis)
     
@@ -244,7 +255,7 @@ def mq_cs_sparse_estimation (state, observable, basis, no_qubits, qubits_per_blo
 
 # ## Simulation function
 
-def classical_shadow_simulation (rho, obs, qb_block, qb_tot, n_tries, sparse):
+def classical_shadow_simulation (rho, obs, qb_block, qb_tot, n_tries, sparse, pure):
     avg_array = []
     var_array = []
 
@@ -252,9 +263,9 @@ def classical_shadow_simulation (rho, obs, qb_block, qb_tot, n_tries, sparse):
 
     for t in range(n_tries):
         if(sparse):
-            exp_val = mq_cs_sparse_estimation (rho, obs, comp_basis, n_qb_tot, n_qb_block)
+            exp_val = mq_cs_sparse_estimation (rho, obs, comp_basis, n_qb_tot, n_qb_block, pure)
         else:
-            exp_val = mq_cs_direct_estimation (rho, obs, comp_basis, n_qb_tot, n_qb_block)
+            exp_val = mq_cs_direct_estimation (rho, obs, comp_basis, n_qb_tot, n_qb_block, pure)
         
         avg_array.append(exp_val)
         var_array.append(exp_val**2)
@@ -292,7 +303,7 @@ def define_file_name (params, index): # thought to be, eventually, extended for 
 # ### Parameters from command line
 
 # +
-if (len(sys.argv) == 11):
+if (len(sys.argv) == 12):
     dir_header = sys.argv[1]
     n_qb_tot = int(sys.argv[2])
     n_qb_block = int(sys.argv[3])
@@ -303,18 +314,20 @@ if (len(sys.argv) == 11):
     obs_ind = int(sys.argv[8])
     sparse  = int(sys.argv[9])
     bell_bool = int(sys.argv[10])
+    pure   = int(sys.argv[11])
     
 else:
     dir_header = "MultipleQubit"
-    n_qb_tot = 4
+    n_qb_tot = 8
     n_qb_block = 1
     epsilon = 0.5
-    n_runs = 1 # test 
+    n_runs = 10 # test 
     init_run = 100 # fail-safe in case of interruption
     n_traj = 1 #int(2* prefactor(1, n_qb_tot)/epsilon**2)
     obs_ind = 1
-    sparse  = False
+    sparse  = True
     bell_bool  = False
+    pure = False
 # -
 
 
@@ -361,32 +374,32 @@ os.system(f'mkdir -p {dir_name}') #should only create it once…
 
 # -
 
-obs_file = dir_header+f"_obs{obs_ind}_{n_qb_tot}_qubits.npy"
-obs = np.array(np.load(obs_dir + obs_file))
-len(obs)
-
 # The following save the states and observables for future use, or load more if already present.
 # NB: it's actually better in these cases to save everything in .npy format: not readable but much more convenient
 
-# +
 # header specifies state
 state_file = dir_header+f"_state_{n_qb_tot}_qubits.npy"
-
 try:
     rho = np.array(np.load(main_dir + state_file))
+    if (pure):
+        if (rho.shape == (dim_tot,dim_tot)): # check in order to avoid dimension mismatch down the line
+            print("not actually pure!")
+            pure = False                         # resets internally the value of purity
+    else:
+        if (rho.shape == (dim_tot,1)):
+            rho = np.outer(rho,rho.conjugate())  # don't forget to take the .dag()!!
 except IOError: # if, for the first time, the state is not present
     rho = qt.rand_ket(dim_tot)  # using a pure state is equivalent but advantageous numerically
-    rho = qt.ket2dm(rho).full()
+    if not (pure):
+        rho = qt.ket2dm(rho)
     np.save(main_dir + state_file, rho)
-    print("I've saved a new file!")
-# -
 
 obs_file = dir_header+f"_obs{obs_ind}_{n_qb_tot}_qubits.npy"
 try:
     obs = np.array(np.load(obs_dir + obs_file))
     if (len(obs) == dim_tot): # guarantees to consider only full tensor products
         obs = tensor_decomposition(obs, spin_array, n_qb_tot) # turns full observable into list of Paulis
-except IOError:
+except :
     obs = rand_pauli_list (spin_array, n_qb_tot) 
     np.save(obs_dir + obs_file, obs)
 
@@ -394,7 +407,7 @@ except IOError:
 
 # +
 if (sparse):
-    rho = sc.sparse.csr_matrix(rho)
+    rho = sc.sparse.csr_matrix(rho)        # converts both np.array and qt.Qobj into sparse array/matrix
     obs = sc.sparse.csr_matrix(tensor(obs))
     
 else:
@@ -404,9 +417,9 @@ else:
 
 # ## Classical shadow collection
 
+time_start = time.time()
 for i in range(init_run, init_run+n_runs):
-    avg, var = classical_shadow_simulation (rho, obs, n_qb_block, n_qb_tot, n_traj, sparse)
+    avg, var = classical_shadow_simulation (rho, obs, n_qb_block, n_qb_tot, n_traj, sparse, pure)
     filename = define_file_name (parameters, i)
-    np.save(dir_name+filename, np.array([avg,var]))
-
-
+    np.save(dir_name+filename, np.array([avg,var]) )
+print(f"\ntime taken: {time.time()-time_start}")
