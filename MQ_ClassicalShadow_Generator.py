@@ -255,6 +255,8 @@ def mq_cs_sparse_estimation (state, observable, basis, no_qubits, qubits_per_blo
 
 # ## Simulation function
 
+# ### Single run, `n_tries`
+
 def classical_shadow_simulation (rho, obs, qb_block, qb_tot, n_tries, sparse, pure):
     avg_array = []
     var_array = []
@@ -273,6 +275,17 @@ def classical_shadow_simulation (rho, obs, qb_block, qb_tot, n_tries, sparse, pu
     #print(f"{qb_block} qubits per block take: {time.time()-time_tot} seconds to complete")
     
     return avg_array, var_array
+
+# ### Simulation and file_save
+
+
+def sim_and_save(i, rho, obs, n_qb_block, n_qb_tot, n_traj, sparse, pure, parameters):
+
+    avg, var = classical_shadow_simulation (rho, obs, n_qb_block, n_qb_tot, n_traj, sparse, pure)
+    filename = define_file_name (parameters, i)
+    np.save(dir_name+filename, np.array([avg,var]) )
+    
+    return
 
 
 # ## File save
@@ -327,11 +340,8 @@ else:
     obs_ind = 1
     sparse  = True
     bell_bool  = False
-    pure = False
+    pure = True
 # -
-
-
-
 # ### Default parameters
 
 # +
@@ -417,9 +427,26 @@ else:
 
 # ## Classical shadow collection
 
+# +
+#time_start = time.time()
+#for i in range(init_run, init_run+n_runs):
+#    sim_and_save(i, rho, obs, n_qb_block, n_qb_tot, n_traj, sparse, pure, parameters)
+#print(f"\ntime taken: {time.time()-time_start}")
+# -
+
+if "SLURM_CPUS_PER_TASK" in os.environ:
+    mp_par = dict(num_cpus=int(os.environ["SLURM_CPUS_PER_TASK"]))
+    print("Using ",mp_par['num_cpus'], "CPUs")
+else:
+    mp_par = dict(num_cpus=2)
+    print("Using default number of CPUs")
+    
+
+# +
 time_start = time.time()
-for i in range(init_run, init_run+n_runs):
-    avg, var = classical_shadow_simulation (rho, obs, n_qb_block, n_qb_tot, n_traj, sparse, pure)
-    filename = define_file_name (parameters, i)
-    np.save(dir_name+filename, np.array([avg,var]) )
+qt.parallel.parallel_map(sim_and_save, np.arange(init_run, init_run+n_runs),task_args = (rho, obs, n_qb_block, n_qb_tot, n_traj, sparse, pure, parameters),**mp_par)
+
 print(f"\ntime taken: {time.time()-time_start}")
+# -
+
+
