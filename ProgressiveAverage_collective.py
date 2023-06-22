@@ -39,11 +39,11 @@ import itertools
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
-# -
 
+# + [markdown] jp-MarkdownHeadingCollapsed=true tags=[]
 # ## Load functions
 
-# + [markdown] tags=[] jp-MarkdownHeadingCollapsed=true
+# + [markdown] tags=[]
 # ### File name and directory
 
 # +
@@ -83,7 +83,7 @@ def define_dir_name(dir_header, parameters):# identifies directory name
     return main_dir, obs_dir, dir_name
 
 
-# + [markdown] tags=[]
+# + [markdown] tags=[] jp-MarkdownHeadingCollapsed=true
 # ## Statistical functions
 
 # +
@@ -396,24 +396,29 @@ def plot_comparison_trajectories(qb_coll, n_qb_block, avg_range, epsilons,traj):
 # Also saves the plot! Amazing!
 
 # + tags=[]
-def copies_required(coll_headers, qb_tot, qb_block, list_eps, no_obs, traj):
+def copies_required(coll_headers, qb_tot, qb_block, list_eps, no_obs, meas, traj):
     
     colors = ['b','g','grey','y','m','c','w','orange','purple']
     markers = ['o','s','v','x']
     tot_avg = np.zeros((len(qb_block),len(list_eps)))
+    actual_size = np.zeros((len(qb_block),len(list_eps)))
     
     global_copies = []
     
     fig,axs = plt.subplots(len(qb_block),1,figsize = [10,5*len(qb_block)],sharex=True)
+    fig.suptitle(f"{qb_tot} qubits, {meas} measurement")
     colls = []
+        
     for header in coll_headers:
-        for obs in range(no_obs+1):
+        for obs in range(0,no_obs+1):
             try:
-                collection = cs_collection(header, no_obs, qb_tot, qb_block,'comp')
+                collection = cs_collection(header, no_obs, qb_tot, qb_block, meas)
             except:
                 collection = cs_collection(header, no_obs, qb_tot, qb_block)
-            colls.append(collection)
     
+            if collection.do_I_exist():
+                colls.append(collection)
+                
     for collection in colls:
         c_ind = coll_headers.index(collection.header)
         if (header=="6Baresi") :
@@ -423,7 +428,7 @@ def copies_required(coll_headers, qb_tot, qb_block, list_eps, no_obs, traj):
 
         eval_coll = collection.get_true_eval()
         prefs = []
-        for qb in qb_block:
+        for qb in collection.qb_per_block:
 
             prefactor = collection.prefactor(qb)
             prefs.append(prefactor)
@@ -445,23 +450,26 @@ def copies_required(coll_headers, qb_tot, qb_block, list_eps, no_obs, traj):
 
             for i in range(len(list_eps)):
                 tot_avg[qb_ind,i] += avg_ind[i]
+                actual_size[qb_ind,i]+=1
 
-    tot_avg = tot_avg/len(colls)
+    tot_avg = np.divide(tot_avg,actual_size)
+
     pref_scale = [[((2**qb+1)**(int(qb_tot/qb)))/e**2 for e in list_eps] for qb in qb_block]
     for i in range(len(qb_block)):
         axs[i].scatter(tot_avg[i],list_eps,c='red', marker = 'x', s=70, label = f'Average')  
         axs[i].scatter(pref_scale[i],list_eps ,c='k', marker = '*', s=70, label = "expected scaling")  
-        
 
     [axs[j].set_title(f"Measurement over {qb_block[j]} qubits") for j in range(len(qb_block))]
     [axs[j].legend() for j in range(len(qb_block))]
     [axs[j].grid(True) for j in range(len(qb_block))]
     [axs[j].set_xscale('log') for j in range(len(qb_block))]
     
-    plt.savefig(f'figures/copies_req_{qb_tot}_qubits.png',format='png',bbox_inches = 'tight')
-    np.save(f'{fixed_dir}{qb_tot}_qubits_copies.npy', global_copies)
+    plt.savefig(f'figures/copies_req_{qb_tot}_{meas}_qubits.png',format='png',bbox_inches = 'tight')
+    np.save(f'{fixed_dir}0files/{qb_tot}_qubits_{meas}_copies.npy', global_copies)
+    np.save(f'{fixed_dir}0files/average_{qb_tot}_qubits_{meas}_copies.npy', tot_avg)
     
     return global_copies, tot_avg
+
 
 # + [markdown] tags=[]
 # ## Data class
@@ -504,8 +512,12 @@ class cs_collection ():
         self.foobar = "*" # not defined a priori, obsolete parameter which has come back to haunt me
         self.len_fact = 1.5 # used to define how long a trajectory is
         
+        
         # identifies path to relevant files
-        self.__define_paths()
+        self.__exists = False                 # assigned beforehand to avoid stalemate
+        self.__exists = self.__define_paths() ## reassigns existence if it finds the relevant files
+        if not self.__exists:
+            return None
         # finds actual expectation value
         self.__true_eval = self.__find_eval()
         
@@ -513,17 +525,20 @@ class cs_collection ():
         self.__eval   = []    
         self.__eval2  = []
         
-        
         self.__load_all()
         self.__avg_eval = np.zeros(len(self.qb_per_block))
         for n_qb in self.qb_per_block:
             i = self.corresponding_index(n_qb)
             self.__avg_eval[i] = self.get_final_eval(n_qb)
+            
         return
     
     # ---------------------------------------- #
     # reference to state and expectation value
     # ---------------------------------------- #
+    
+    def do_I_exist(self):        # I get it, it's kind of an hack…
+        return self.__exists
     
     def __define_paths (self):   # identifies uniquely state, observable and particular file path
         fixed_dir = '/Users/andrea/vienna_data/clifford_data/' 
@@ -532,7 +547,11 @@ class cs_collection ():
         
         self.state_path = main_dir + f"{self.header}_state_{self.n_qubits}_qubits.npy"
         self.obs_path = obs_dir + f"{self.header}_obs{self.obs_ind}_{self.n_qubits}_qubits.npy"    
-        return
+
+        if(glob.glob(self.obs_path)):
+            return True
+        
+        return False
     
     def __find_eval(self):
         rho = np.array(np.load(self.state_path))
@@ -568,13 +587,12 @@ class cs_collection ():
     def __load_all(self):              # in order to guarantee that order of evals is the same as qb_block
         #print(f"Commencing automatic data load for state {self.header}")
         for qb in self.qb_per_block:
-            i = self.corresponding_index(qb)
             self.load_data_per_qb(qb)
             #print(f"Correctly loaded data for {qb} qubits per block")
         return
         
     def load_data_per_qb(self, n_qb): # for now, it just finds all relevant data with the same header, n_qb and n_block
-        i_block=self.corresponding_index(n_qb) 
+        
         params = [self.obs_ind, self.n_qubits, n_qb, self.foobar]
         if (self.meas):
             params.append(self.meas)
@@ -586,15 +604,16 @@ class cs_collection ():
 
         if (relevant_files):
             for file in relevant_files:
-                foo_vec = np.real(np.load(file))
-                self.__increase_eval(i_block, foo_vec[i_exp],foo_vec[i_exp2])
+                foo_vec = np.real(np.load(file,allow_pickle=True))
+                self.__increase_eval(n_qb, foo_vec[i_exp],foo_vec[i_exp2])
         else:
             self.qb_per_block.remove(n_qb)
-            print(self.qb_per_block)
+            
         return
         
-    def __increase_eval(self, i_block, vec_eval, vec_var):
-        if (len(self.__eval) < i_block+1):
+    def __increase_eval(self, n_qb, vec_eval, vec_var):
+        i_block=self.corresponding_index(n_qb)         
+        if (len(self.__eval) == i_block):
             self.__eval.append(vec_eval)
             self.__eval2.append(vec_var)
         else:
@@ -663,7 +682,18 @@ class cs_collection ():
         return avg,  [pref+copies_needed(self.__true_eval, avg[pref:], e) for e in list_eps]
             
 
-# + [markdown] tags=[] jp-MarkdownHeadingCollapsed=true
+# ## Bennacer data
+# Before different measurements were implemented, so loaded separately
+
+# +
+qb_tot = 8
+qb_block = [1,2,4,8]
+no_obs = 0
+
+coll_headers = "4Bennacer"
+isma  = cs_collection(coll_headers, no_obs, qb_tot, qb_block)
+
+# + [markdown] tags=[]
 # ## Adli data
 # For now, the only one with 4 qubits total
 
@@ -673,12 +703,14 @@ qb_tot = 4
 qb_block = [1,2,4]
 no_obs = 0
 
-#adli_comp = cs_collection(header, no_obs, qb_tot, qb_block,'comp')
+adli_comp = cs_collection(header, no_obs, qb_tot, qb_block,'comp')
 #adli_bell = cs_collection(header, no_obs, qb_tot, qb_block,'bell')
 #adli_sic = cs_collection(header, no_obs, qb_tot, qb_block,'bell')
 
 
 # -
+
+adli_comp.do_I_exist() ##this is kind of a hack…
 
 # ## Comparison of different observables
 # Instead of trying to divide the data sets into smaller samples, let's do it the old-fashioned way: just direct comparison of different trajectories, seeing when each surpasses a certain line. Then, we use **this** result to divide the data set, in order to increase the statistics a little
@@ -688,8 +720,9 @@ i_qb_tot = 0
 i_qb_block = 1
 i_eps = 2
 
-list_eps = [0.5,0.3,0.1,0.05]
+list_eps = [0.5,0.3,0.2,0.1,0.05]
 n_traj = 30
+meas = 'comp'
 
 # ### 8 qubits
 
@@ -698,11 +731,11 @@ qb_tot = 8
 qb_block = [1,2,4,8]
 no_obs = 0
 
-coll_headers = ["9Giroud","10Diaz","11Ibra","12Rebic"]
-#"4Bennacer", "6Baresi","8Tonali",
+coll_headers = ["6Baresi","8Tonali","9Giroud","10Diaz","11Ibra","12Rebic"]#"4Bennacer"]#
+#
 
 # +
-#global_indices_8, tot_avg_8 = copies_required(coll_headers, qb_tot, qb_block, list_eps, no_obs, n_traj)
+#global_indices_8, tot_avg_8 = copies_required(coll_headers, qb_tot, qb_block, list_eps, no_obs, meas, n_traj)
 # -
 
 # ### 6 qubits
@@ -712,11 +745,11 @@ qb_tot = 6
 qb_block = [1,2,3,6]
 no_obs = 1
 
-coll_headers = ["16Maignan","17Leao"]
+coll_headers = ["16Maignan","17Leao","18Montolivo","19Hernandez"]
 
 # -
 
-global_indices_6, tot_avg_6 = copies_required(coll_headers, qb_tot, qb_block, list_eps, no_obs, n_traj)
+global_indices_6, tot_avg_6 = copies_required(coll_headers, qb_tot, qb_block, list_eps, no_obs, meas, n_traj)
 
 # ### 4 qubits
 
@@ -725,8 +758,192 @@ qb_tot = 4
 qb_block = [1,2,4]
 no_obs = 3
 
-coll_headers = ["14Baka","15Hauge"]
+coll_headers = ["7Adli", "14Baka","15Hauge"]
 
 # -
 
-global_indices_4, tot_avg_4 = copies_required(coll_headers, qb_tot, qb_block, list_eps, no_obs, n_traj)
+global_indices_4, tot_avg_4 = copies_required(coll_headers, qb_tot, qb_block, list_eps, no_obs, meas, n_traj)
+
+# ## Bell Measurements
+
+meas = 'bell'
+
+# ### 8 qubits
+
+# +
+qb_tot = 8
+qb_block = [1,2,4,8]
+no_obs = 0
+
+coll_headers = ["6Baresi","8Tonali","9Giroud","10Diaz","11Ibra","12Rebic"]
+#"4Bennacer"
+# -
+
+global_indices_8b, tot_avg_8b = copies_required(coll_headers, qb_tot, qb_block, list_eps, no_obs, meas, n_traj)
+
+# ### 6 qubits
+
+# +
+qb_tot = 6
+qb_block = [1,2,3,6]
+no_obs = 1
+
+coll_headers = ["16Maignan","17Leao","18Montolivo","19Hernandez"]
+
+# -
+
+global_indices_6b, tot_avg_6b = copies_required(coll_headers, qb_tot, qb_block, list_eps, no_obs, meas, n_traj)
+
+# ### 4 qubits
+
+# +
+qb_tot = 4
+qb_block = [1,2,4]
+no_obs = 3
+
+coll_headers = ["7Adli","14Baka","15Hauge"]
+
+# -
+
+global_indices_4b, tot_avg_4b = copies_required(coll_headers, qb_tot, qb_block, list_eps, no_obs, meas, n_traj)
+
+# ## Averages comparisons
+
+# +
+dir_files = fixed_dir+'0files/'
+meas_array = ['comp','bell','sic']
+
+qb_tot = [4,6,8]
+
+file_names = [f'{qb}_qubits_{meas}_copies.npy' for qb in qb_tot for meas in meas_array]
+# -
+
+# ### 8 qubits
+# #### Plot: measurement over different qubits
+
+# +
+qb_tot = 8
+qb_block = [1,2,4,8]
+
+markers = ['o','s','v','x']
+    
+fig,axs = plt.subplots(len(qb_block),1,figsize = [10,5*len(qb_block)],sharex=True)
+
+prefactor = [((2**qb+1)**(int(qb_tot/qb))) for qb in qb_block]
+pref_scale_var = [[((2**qb+1)**(int(qb_tot/qb)))/e  for e in list_eps ]for qb in qb_block]
+pref_scale = [[((2**qb+1)**(int(qb_tot/qb)))/e**2  for e in list_eps ]for qb in qb_block]
+
+for i in range(len(qb_block)):
+    axs[i].scatter(tot_avg_8[i],list_eps,c='red', marker = 'x', s=70, label = f'Classical shadow')  
+    axs[i].scatter(tot_avg_8b[i],list_eps,c='blue', marker = 'o', s=70, label = f'Bell measurements')
+    axs[i].scatter(pref_scale[i],list_eps ,c='k', marker = '*', s=70, label = "expected scaling")  
+    axs[i].scatter(pref_scale_var[i],list_eps ,c='k', marker = 'v', s=70, label = "alternative scaling")  
+        
+        
+[axs[j].set_title(f"Measurement over {qb_block[j]} qubits") for j in range(len(qb_block))]
+[axs[j].legend() for j in range(len(qb_block))]
+[axs[j].grid(True) for j in range(len(qb_block))]
+[axs[j].set_xscale('log') for j in range(len(qb_block))]
+    
+# -
+
+# #### Plot: measurement for different $\varepsilon$
+
+# +
+qb_tot = 8
+qb_block = [1,2,4,8]
+
+markers = ['o','s','v','x']
+    
+fig,axs = plt.subplots(len(list_eps),1,figsize = [7,5*len(qb_block)],sharex=True)
+
+prefactor = np.array([((2**qb+1)**(int(qb_tot/qb))) for qb in qb_block])
+
+for i in range(len(list_eps)):
+    e = list_eps[i]
+    axs[i].scatter(qb_block,tot_avg_8[:,i],c='red', marker = 'x', s=70, label = f'Classical shadow')  
+    axs[i].scatter(qb_block,tot_avg_8b[:,i],c='blue', marker = 'o', s=70, label = f'Bell measurements')
+    
+    axs[i].plot(np.arange(1,qb_tot+1), np.array([((2**qb+1)**((qb_tot/qb))) for qb in np.arange(1,qb_tot+1)])/(e**2), c='k', marker='*', label='Expected scaling')
+    axs[i].plot(np.arange(1,qb_tot+1), np.array([((2**qb+1)**((qb_tot/qb))) for qb in np.arange(1,qb_tot+1)])/(e), c='gray', marker='v', label='variation scaling')
+        
+[axs[i].set_title(f"$\epsilon$= {list_eps[j]}") for i in range(len(list_eps))]
+[axs[i].legend() for i in range(len(list_eps))]
+[axs[i].grid(True) for i in range(len(list_eps)) ]
+[axs[i].set_yscale('log') for i in range(len(list_eps))] 
+    
+# -
+
+# #### Ratio
+
+qb_tot = 8
+block_8 = [1,2,4,8]
+pref_8  = [((2**qb+1)**(int(qb_tot/qb))) for qb in block_8]
+ratio_8 = [tot_avg_8[i]/pref_8[i] for i in range(len(block_8))]
+ratio_8b = [tot_avg_8b[i]/pref_8[i] for i in range(len(block_8))]
+
+qb_tot = 6
+block_6 = [1,2,3,6]
+pref_6  = [((2**qb+1)**(int(qb_tot/qb))) for qb in block_6]
+ratio_6 = [tot_avg_6[i]/pref_6[i] for i in range(len(block_6))]
+ratio_6b = [tot_avg_6b[i]/pref_6[i] for i in range(len(block_6))]
+
+qb_tot = 4
+block_4 = [1,2,4]
+pref_4  = [((2**qb+1)**(int(qb_tot/qb))) for qb in block_4]
+ratio_4 = [tot_avg_4[i]/pref_4[i] for i in range(len(block_4))]
+ratio_4b = [tot_avg_4b[i]/pref_4[i] for i in range(len(block_4))]
+
+# +
+qb_tot = 4
+tot_block = [1,2,3,4,6,8]
+list_eps = np.array(list_eps)
+
+fig, axs = plt.subplots(len(tot_block),2,figsize=[2*10,7*len(tot_block)])
+fig.suptitle (r"Ratio between number of copies and expected scaling, depending on $\varepsilon$", size=30)
+for i in range(len(block_8)):
+    qb = block_8[i]
+    ind = tot_block.index(qb)
+    axs[ind,0].scatter(list_eps,ratio_8[i],c='red', marker = 'x', s=70, label = f'8 qubits')
+    axs[ind,1].scatter(list_eps,np.divide(ratio_8[i], list_eps**(-1)), c='red', marker = 'o', s=70,label=r'Division by $\varepsilon^{-1}$')
+    axs[ind,1].scatter(list_eps,np.divide(ratio_8[i], list_eps**(-2)), c='red', marker = '*', s=70,label=r'Division by $\varepsilon^{-2}$')
+    #axs[ind].scatter(list_eps,pref_8[i],c='red', marker = '*', s=70)
+    
+for i in range(len(block_6)):
+    qb = block_6[i]
+    ind = tot_block.index(qb)
+    axs[ind,0].scatter(list_eps,ratio_6[i],c='blue', marker = 'x', s=70, label = f'6 qubits')  
+    axs[ind,1].scatter(list_eps,np.divide(ratio_6[i], list_eps**(-1)), c='blue', marker = 'o', s=70)
+    axs[ind,1].scatter(list_eps,np.divide(ratio_6[i], list_eps**(-2)), c='blue', marker = '*', s=70)
+
+    #axs[ind].scatter(list_eps,pref_6[i],c='blue', marker = '*', s=70)
+
+for i in range(len(block_4)):
+    qb = block_4[i]
+    ind = tot_block.index(qb)
+    axs[ind,0].scatter(list_eps,ratio_4[i],c='green', marker = 'x', s=70, label = f'4 qubits')  
+    axs[ind,1].scatter(list_eps,np.divide(ratio_4[i], list_eps**(-1)), c='green', marker = 'o', s=70)
+    axs[ind,1].scatter(list_eps,np.divide(ratio_4[i], list_eps**(-2)), c='green', marker = '*', s=70)
+
+
+fact1 = 0.8
+fact2 = 0.05
+
+for j in range(len(tot_block)):
+    axs[j,0].plot(list_eps,fact1*list_eps**(-1),c='grey',label=r'$\varepsilon^{-1}$') 
+    axs[j,0].plot(list_eps,fact2*list_eps**(-2),c='k',label=r'$\varepsilon^{-2}$')
+    axs[j,0].set_ylabel(r'$N / (2^l+1)^{n/l}$',size=20) 
+    
+    axs[j,1].set_ylabel(r'$N / (2^l+1)^{n/l} / \varepsilon$',size=20)
+    axs[j,1].hlines(1,list_eps[0],list_eps[-1],label='expected ratio',color='k', linestyle='--')
+
+    for i in range(2):
+        axs[j,i].legend(fontsize=15) 
+        axs[j,i].set_xlabel(r'$\varepsilon$',size=20) 
+        axs[j,i].set_title(f"Measurement over {tot_block[j]} qubits",size=25) 
+        axs[j,i].grid(True)
+        axs[j,i].set_xscale('log') 
+
+# -
+
+
